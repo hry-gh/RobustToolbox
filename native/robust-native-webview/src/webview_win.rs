@@ -8,6 +8,7 @@ use webview2_com::Microsoft::Web::WebView2::Win32::*;
 use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
+use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
 use windows::Win32::System::Threading::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -137,9 +138,7 @@ pub fn shutdown() {
     *INITIALIZED.lock().unwrap() = false;
 }
 
-pub fn pump() {
-    // WebView2 uses the Win32 message loop, which SDL already runs
-}
+pub fn pump() {}
 
 pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     if parent_handle.is_null() || !*INITIALIZED.lock().unwrap() {
@@ -185,11 +184,9 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     };
 
     let webview: ICoreWebView2 = unsafe {
-        let mut wv = None;
-        let _ = controller.get_CoreWebView2(&mut wv);
-        match wv {
-            Some(wv) => wv,
-            None => return ptr::null_mut(),
+        match controller.CoreWebView2() {
+            Ok(wv) => wv,
+            Err(_) => return ptr::null_mut(),
         }
     };
 
@@ -197,7 +194,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     unsafe {
         let mut bounds = RECT::default();
         let _ = GetClientRect(parent, &mut bounds);
-        let _ = controller.put_Bounds(bounds);
+        let _ = controller.SetBounds(bounds);
     }
 
     // Set up scheme handler for res://*
@@ -219,7 +216,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
                         let request = args.Request()?;
                         let mut uri = PWSTR::null();
-                        request.get_Uri(&mut uri)?;
+                        request.Uri(&mut uri)?;
                         let uri_string = pwstr_to_string(uri);
                         CoTaskMemFree(Some(uri.0 as *const c_void));
 
@@ -251,16 +248,15 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                         };
 
                         let mut uri = PWSTR::null();
-                        args.get_Uri(&mut uri)?;
+                        args.Uri(&mut uri)?;
                         let uri_string = pwstr_to_string(uri);
                         CoTaskMemFree(Some(uri.0 as *const c_void));
 
                         let c_uri = std::ffi::CString::new(uri_string).unwrap();
 
                         let mut is_redirected = BOOL(0);
-                        let _ = args.get_IsRedirected(&mut is_redirected);
+                        let _ = args.IsRedirected(&mut is_redirected);
 
-                        // handle is null for now — C# uses handle-based lookup
                         let cancel = callback(
                             ptr::null_mut(),
                             c_uri.as_ptr(),
@@ -268,7 +264,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                             user_data,
                         );
                         if cancel != 0 {
-                            args.put_Cancel(true)?;
+                            let _ = args.SetCancel(true);
                         }
                         Ok(())
                     }),
@@ -300,7 +296,6 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         }
     }
 
-    // Track instance
     if let Some(ref mut map) = *INSTANCES.lock().unwrap() {
         map.insert(handle as usize, ());
     }
@@ -331,38 +326,26 @@ pub fn navigate(handle: *mut c_void, url: *const c_char) {
 }
 
 pub fn reload(handle: *mut c_void) {
-    unsafe {
-        let instance = from_handle::<WinWebView>(handle);
-        let _ = instance.webview.Reload();
-    }
+    unsafe { let _ = from_handle::<WinWebView>(handle).webview.Reload(); }
 }
 
 pub fn stop(handle: *mut c_void) {
-    unsafe {
-        let instance = from_handle::<WinWebView>(handle);
-        let _ = instance.webview.Stop();
-    }
+    unsafe { let _ = from_handle::<WinWebView>(handle).webview.Stop(); }
 }
 
 pub fn go_back(handle: *mut c_void) {
-    unsafe {
-        let instance = from_handle::<WinWebView>(handle);
-        let _ = instance.webview.GoBack();
-    }
+    unsafe { let _ = from_handle::<WinWebView>(handle).webview.GoBack(); }
 }
 
 pub fn go_forward(handle: *mut c_void) {
-    unsafe {
-        let instance = from_handle::<WinWebView>(handle);
-        let _ = instance.webview.GoForward();
-    }
+    unsafe { let _ = from_handle::<WinWebView>(handle).webview.GoForward(); }
 }
 
 pub fn can_go_back(handle: *mut c_void) -> bool {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         let mut result = BOOL(0);
-        let _ = instance.webview.get_CanGoBack(&mut result);
+        let _ = instance.webview.CanGoBack(&mut result);
         result.as_bool()
     }
 }
@@ -371,13 +354,12 @@ pub fn can_go_forward(handle: *mut c_void) -> bool {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         let mut result = BOOL(0);
-        let _ = instance.webview.get_CanGoForward(&mut result);
+        let _ = instance.webview.CanGoForward(&mut result);
         result.as_bool()
     }
 }
 
 pub fn is_loading(_handle: *mut c_void) -> bool {
-    // WebView2 doesn't have a direct IsLoading property
     false
 }
 
@@ -394,7 +376,7 @@ pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         let bounds = RECT { left: 0, top: 0, right: width, bottom: height };
-        let _ = instance.controller.put_Bounds(bounds);
+        let _ = instance.controller.SetBounds(bounds);
     }
 }
 
@@ -402,7 +384,7 @@ pub fn set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height:
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         let bounds = RECT { left: x, top: y, right: x + width, bottom: y + height };
-        let _ = instance.controller.put_Bounds(bounds);
+        let _ = instance.controller.SetBounds(bounds);
     }
 }
 
@@ -429,7 +411,6 @@ pub fn respond_scheme(
     status_code: c_int,
 ) {
     unsafe {
-        // Reconstruct the args from the ManuallyDrop'd pointer
         let args_ref = &*(request_handle as *const ICoreWebView2WebResourceRequestedEventArgs);
 
         let env = {
@@ -440,7 +421,6 @@ pub fn respond_scheme(
             }
         };
 
-        // Create IStream from data
         let stream: IStream = CreateStreamOnHGlobal(None, true).unwrap();
         if !data.is_null() && length > 0 {
             let slice = std::slice::from_raw_parts(data as *const u8, length as usize);
@@ -450,7 +430,6 @@ pub fn respond_scheme(
                 length as u32,
                 Some(&mut written),
             );
-            // Reset stream position
             let _ = stream.Seek(0, STREAM_SEEK_SET, None);
         }
 
@@ -464,17 +443,13 @@ pub fn respond_scheme(
 
         let headers = format!("Content-Type: {}", mime_str);
 
-        let mut response = None;
-        let _ = env.CreateWebResourceResponse(
+        if let Ok(response) = env.CreateWebResourceResponse(
             &stream,
             status_code,
             w!("OK"),
             &to_hstring(&headers),
-            &mut response,
-        );
-
-        if let Some(response) = response {
-            let _ = args_ref.put_Response(&response);
+        ) {
+            let _ = args_ref.SetResponse(&response);
         }
 
         // Drop the ManuallyDrop'd clone
