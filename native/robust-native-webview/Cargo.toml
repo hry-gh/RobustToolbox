@@ -8,15 +8,57 @@ crate-type = ["cdylib"]
 
 [features]
 default = ["cef"]
-cef = ["dep:cef", "dep:objc2", "dep:objc2-app-kit"]
+cef = ["dep:cef", "dep:cc"]
 
 [dependencies]
 cef = { workspace = true, default-features = false, optional = true }
-objc2 = { workspace = true, optional = true }
-objc2-app-kit = { workspace = true, optional = true }
 
 [build-dependencies]
-cc = { workspace = true }
+cc = { workspace = true, optional = true }
 
-[target.'cfg(target_os = "linux")'.build-dependencies]
-pkg-config = "0.3"
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = { workspace = true }
+objc2-app-kit = { workspace = true, features = ["NSView", "NSWindow", "NSResponder"] }
+objc2-web-kit = { workspace = true, features = [
+    "WKWebView",
+    "WKWebViewConfiguration",
+    "WKNavigation",
+    "WKNavigationAction",
+    "WKNavigationDelegate",
+    "WKNavigationResponse",
+    "WKURLSchemeHandler",
+    "WKURLSchemeTask",
+    "WKUserContentController",
+    "WKScriptMessage",
+    "WKScriptMessageHandler",
+    "WKPreferences",
+] }
+objc2-foundation = { workspace = true, features = [
+    "NSString",
+    "NSURL",
+    "NSURLRequest",
+    "NSURLResponse",
+    "NSData",
+    "NSError",
+    "NSDictionary",
+    "NSValue",
+    "NSGeometry",
+    "NSThread",
+] }
+block2 = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "2.0"
+gtk = "0.18"
+gio = "0.18"
+glib = "0.18"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+webview2-com = "0.38"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_System_Com",
+] }
+windows-core = "0.61"
