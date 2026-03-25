@@ -83,4 +83,11 @@ internal static partial class WebViewNative
         nint handle,
         MessageCallback? callback,
         nint userData);
+
+    [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
+    internal unsafe delegate int BeforeBrowseCallback(nint handle, byte* url, int isRedirect, nint userData);
+
+    [DllImport(Lib)]
+    internal static extern void robust_webview_set_before_browse_handler(
+        BeforeBrowseCallback? callback, nint userData);
 }

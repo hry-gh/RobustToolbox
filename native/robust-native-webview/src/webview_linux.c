@@ -12,9 +12,13 @@
 typedef void (*SchemeCallback)(const char* url, void* request_handle, void* user_data);
 typedef void (*MessageCallback)(void* handle, const char* message, void* user_data);
 
+typedef int (*BeforeBrowseCallback)(void* handle, const char* url, int is_redirect, void* user_data);
+
 // Global state
 static SchemeCallback g_scheme_callback = NULL;
 static void* g_scheme_user_data = NULL;
+static BeforeBrowseCallback g_before_browse_callback = NULL;
+static void* g_before_browse_user_data = NULL;
 static WebKitWebContext* g_web_context = NULL;
 static int g_initialized = 0;
 
@@ -57,6 +61,29 @@ static void script_message_callback(WebKitUserContentManager* manager,
         instance->message_callback(instance, message, instance->message_user_data);
         g_free(message);
     }
+}
+
+// Before-browse via decide-policy
+static gboolean decide_policy_callback(WebKitWebView *web_view,
+                                        WebKitPolicyDecision *decision,
+                                        WebKitPolicyDecisionType type,
+                                        gpointer user_data) {
+    if (type != WEBKIT_POLICY_DECISION_TYPE_NAVIGATION_ACTION || !g_before_browse_callback)
+        return FALSE;
+
+    WebViewInstance* instance = (WebViewInstance*)user_data;
+    WebKitNavigationPolicyDecision* nav_decision = WEBKIT_NAVIGATION_POLICY_DECISION(decision);
+    WebKitNavigationAction* action = webkit_navigation_policy_decision_get_navigation_action(nav_decision);
+    WebKitURIRequest* request = webkit_navigation_action_get_request(action);
+    const char* uri = webkit_uri_request_get_uri(request);
+
+    int cancel = g_before_browse_callback(instance, uri, 0, g_before_browse_user_data);
+    if (cancel) {
+        webkit_policy_decision_ignore(decision);
+        return TRUE;
+    }
+
+    return FALSE;
 }
 
 #pragma GCC visibility push(default)
@@ -115,6 +142,10 @@ void* webview_linux_create(void* parent_handle, const char* url) {
     // Create webview
     instance->webview = WEBKIT_WEB_VIEW(webkit_web_view_new_with_context(g_web_context));
     webkit_web_view_set_user_content_manager(instance->webview, instance->content_manager);
+
+    // Before-browse handler via decide-policy signal
+    g_signal_connect(instance->webview, "decide-policy",
+                     G_CALLBACK(decide_policy_callback), instance);
 
     // Add webview to plug
     gtk_container_add(GTK_CONTAINER(instance->plug), GTK_WIDGET(instance->webview));
@@ -259,6 +290,14 @@ void webview_linux_set_message_handler(
     WebViewInstance* instance = (WebViewInstance*)handle;
     instance->message_callback = callback;
     instance->message_user_data = user_data;
+}
+
+void webview_linux_set_before_browse_handler(
+    int (*callback)(void*, const char*, int, void*),
+    void* user_data
+) {
+    g_before_browse_callback = callback;
+    g_before_browse_user_data = user_data;
 }
 
 #pragma GCC visibility pop

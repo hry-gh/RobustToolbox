@@ -44,6 +44,10 @@ mod ffi {
             callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void)>,
             user_data: *mut c_void,
         );
+        pub fn webview_win_set_before_browse_handler(
+            callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int>,
+            user_data: *mut c_void,
+        );
     }
 }
 
@@ -83,6 +87,10 @@ mod ffi {
         pub fn webview_mac_set_message_handler(
             handle: *mut c_void,
             callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void)>,
+            user_data: *mut c_void,
+        );
+        pub fn webview_mac_set_before_browse_handler(
+            callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int>,
             user_data: *mut c_void,
         );
     }
@@ -126,12 +134,19 @@ mod ffi {
             callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, *mut c_void)>,
             user_data: *mut c_void,
         );
+        pub fn webview_linux_set_before_browse_handler(
+            callback: Option<unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int>,
+            user_data: *mut c_void,
+        );
     }
 }
 
 type SchemeCallbackFn = unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_void);
+// Returns non-zero to cancel navigation
+type BeforeBrowseCallbackFn = unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int;
 
 static SCHEME_CALLBACK: Mutex<Option<(SchemeCallbackFn, SendPtr)>> = Mutex::new(None);
+static BEFORE_BROWSE_CALLBACK: Mutex<Option<(BeforeBrowseCallbackFn, SendPtr)>> = Mutex::new(None);
 
 // Callback trampoline to forward to C#
 unsafe extern "C" fn scheme_trampoline(url: *const c_char, request_handle: *mut c_void, _user_data: *mut c_void) {
@@ -140,6 +155,16 @@ unsafe extern "C" fn scheme_trampoline(url: *const c_char, request_handle: *mut 
             unsafe { callback(url, request_handle, user_data.0); }
         }
     }
+}
+
+// Before-browse trampoline: returns non-zero to cancel
+unsafe extern "C" fn before_browse_trampoline(handle: *mut c_void, url: *const c_char, is_redirect: c_int, _user_data: *mut c_void) -> c_int {
+    if let Ok(guard) = BEFORE_BROWSE_CALLBACK.lock() {
+        if let Some((callback, ref user_data)) = *guard {
+            return unsafe { callback(handle, url, is_redirect, user_data.0) };
+        }
+    }
+    0
 }
 
 // --- Public C API ---
@@ -450,4 +475,27 @@ pub extern "C" fn robust_webview_set_message_handler(
 
     #[cfg(target_os = "linux")]
     unsafe { ffi::webview_linux_set_message_handler(handle, callback, user_data); }
+}
+
+pub type BeforeBrowseCallback = unsafe extern "C" fn(*mut c_void, *const c_char, c_int, *mut c_void) -> c_int;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn robust_webview_set_before_browse_handler(
+    callback: Option<BeforeBrowseCallback>,
+    user_data: *mut c_void,
+) {
+    if let Some(cb) = callback {
+        if let Ok(mut guard) = BEFORE_BROWSE_CALLBACK.lock() {
+            *guard = Some((cb, SendPtr(user_data)));
+        }
+
+        #[cfg(target_os = "windows")]
+        unsafe { ffi::webview_win_set_before_browse_handler(Some(before_browse_trampoline), ptr::null_mut()); }
+
+        #[cfg(target_os = "macos")]
+        unsafe { ffi::webview_mac_set_before_browse_handler(Some(before_browse_trampoline), ptr::null_mut()); }
+
+        #[cfg(target_os = "linux")]
+        unsafe { ffi::webview_linux_set_before_browse_handler(Some(before_browse_trampoline), ptr::null_mut()); }
+    }
 }

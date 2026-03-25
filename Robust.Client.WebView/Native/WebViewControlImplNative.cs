@@ -247,8 +247,65 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         _requestHandlers.Remove(handler);
     }
 
-    public void AddBeforeBrowseHandler(Action<IBeforeBrowseContext> handler) { }
-    public void RemoveBeforeBrowseHandler(Action<IBeforeBrowseContext> handler) { }
+    private readonly List<Action<IBeforeBrowseContext>> _beforeBrowseHandlers = new();
+
+    public void AddBeforeBrowseHandler(Action<IBeforeBrowseContext> handler)
+    {
+        _beforeBrowseHandlers.Add(handler);
+    }
+
+    public void RemoveBeforeBrowseHandler(Action<IBeforeBrowseContext> handler)
+    {
+        _beforeBrowseHandlers.Remove(handler);
+    }
+
+    /// <summary>
+    /// Called by the manager when the native webview is about to navigate.
+    /// Returns true to cancel the navigation.
+    /// </summary>
+    internal bool HandleBeforeBrowse(string url, bool isRedirect)
+    {
+        if (_beforeBrowseHandlers.Count == 0)
+            return false;
+
+        // Rewrite res:// back to http://127.0.0.1/ for content-side handlers
+        var handlerUrl = url;
+        if (url.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+        {
+            handlerUrl = "http://127.0.0.1" + new Uri(url).AbsolutePath + new Uri(url).Query;
+        }
+
+        var context = new NativeBeforeBrowseContext(handlerUrl, isRedirect);
+
+        foreach (var handler in _beforeBrowseHandlers)
+        {
+            handler(context);
+            if (context.IsCancelled)
+                return true;
+        }
+
+        return false;
+    }
+
+    private sealed class NativeBeforeBrowseContext : IBeforeBrowseContext
+    {
+        public string Url { get; }
+        public string Method => "GET";
+        public bool IsRedirect { get; }
+        public bool UserGesture => true;
+        public bool IsCancelled { get; private set; }
+
+        public NativeBeforeBrowseContext(string url, bool isRedirect)
+        {
+            Url = url;
+            IsRedirect = isRedirect;
+        }
+
+        public void DoCancel()
+        {
+            IsCancelled = true;
+        }
+    }
 
     private sealed class NativeRequestHandlerContext : IRequestHandlerContext
     {

@@ -10,20 +10,26 @@
 typedef void (*SchemeCallback)(const char* url, void* request_handle, void* user_data);
 typedef void (*MessageCallback)(void* handle, const char* message, void* user_data);
 
+typedef int (*BeforeBrowseCallback)(void* handle, const char* url, int is_redirect, void* user_data);
+
 // Global state
 static SchemeCallback g_scheme_callback = NULL;
 static void* g_scheme_user_data = NULL;
+static BeforeBrowseCallback g_before_browse_callback = NULL;
+static void* g_before_browse_user_data = NULL;
 static BOOL g_initialized = NO;
 
 // Forward declarations
 @class RobustSchemeHandler;
 @class RobustScriptMessageHandler;
+@class RobustNavigationDelegate;
 
 // Per-webview state
 typedef struct {
     WKWebView* webview;
     NSWindow* parent;
     RobustScriptMessageHandler* message_handler;
+    RobustNavigationDelegate* navigation_delegate;
     MessageCallback message_callback;
     void* message_user_data;
 } WebViewInstance;
@@ -84,23 +90,12 @@ typedef struct {
 
 @end
 
-// Navigation delegate for debugging
+// Navigation delegate — routes before-browse through callback
 @interface RobustNavigationDelegate : NSObject <WKNavigationDelegate>
+@property (nonatomic, assign) WebViewInstance* instance;
 @end
 
 @implementation RobustNavigationDelegate
-
-- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
-    NSLog(@"[webview] didStartProvisionalNavigation: %@", webView.URL);
-}
-
-- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
-    NSLog(@"[webview] didFinishNavigation: %@", webView.URL);
-}
-
-- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
-    NSLog(@"[webview] didFailNavigation: %@ error: %@", webView.URL, error);
-}
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
     NSLog(@"[webview] didFailProvisionalNavigation: %@ error: %@", webView.URL, error);
@@ -109,15 +104,29 @@ typedef struct {
 - (void)webView:(WKWebView *)webView
     decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
     decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
-    NSLog(@"[webview] decidePolicyForNavigation: %@", navigationAction.request.URL);
-    decisionHandler(WKNavigationActionPolicyAllow);
+
+    if (!g_before_browse_callback) {
+        decisionHandler(WKNavigationActionPolicyAllow);
+        return;
+    }
+
+    NSURL* url = navigationAction.request.URL;
+    const char* urlString = [[url absoluteString] UTF8String];
+    int isRedirect = (navigationAction.sourceFrame != nil && navigationAction.targetFrame == nil) ? 1 : 0;
+
+    int cancel = g_before_browse_callback(self.instance, urlString, isRedirect, g_before_browse_user_data);
+
+    if (cancel) {
+        decisionHandler(WKNavigationActionPolicyCancel);
+    } else {
+        decisionHandler(WKNavigationActionPolicyAllow);
+    }
 }
 
 @end
 
 // Static scheme handler instance
 static RobustSchemeHandler* g_scheme_handler = nil;
-static RobustNavigationDelegate* g_navigation_delegate = nil;
 
 #pragma mark - C API
 
@@ -125,7 +134,6 @@ int webview_mac_init(void) {
     if (g_initialized) return 0;
 
     g_scheme_handler = [[RobustSchemeHandler alloc] init];
-    g_navigation_delegate = [[RobustNavigationDelegate alloc] init];
     g_initialized = YES;
     return 0;
 }
@@ -173,8 +181,10 @@ void* webview_mac_create(void* parent_handle, const char* url) {
             [instance->webview setInspectable:YES];
         }
 
-        // Set navigation delegate for debugging
-        instance->webview.navigationDelegate = g_navigation_delegate;
+        // Set per-instance navigation delegate for before-browse callbacks
+        instance->navigation_delegate = [[RobustNavigationDelegate alloc] init];
+        instance->navigation_delegate.instance = instance;
+        instance->webview.navigationDelegate = instance->navigation_delegate;
 
         // Add as subview
         [contentView addSubview:instance->webview];
@@ -353,6 +363,14 @@ void webview_mac_set_message_handler(
     WebViewInstance* instance = (WebViewInstance*)handle;
     instance->message_callback = callback;
     instance->message_user_data = user_data;
+}
+
+void webview_mac_set_before_browse_handler(
+    int (*callback)(void*, const char*, int, void*),
+    void* user_data
+) {
+    g_before_browse_callback = callback;
+    g_before_browse_user_data = user_data;
 }
 
 #endif // __APPLE__

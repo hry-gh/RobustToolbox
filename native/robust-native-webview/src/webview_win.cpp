@@ -15,10 +15,14 @@ using namespace Microsoft::WRL;
 typedef void (*SchemeCallback)(const char* url, void* request_handle, void* user_data);
 typedef void (*MessageCallback)(void* handle, const char* message, void* user_data);
 
+typedef int (*BeforeBrowseCallback)(void* handle, const char* url, int is_redirect, void* user_data);
+
 // Global state
 static ComPtr<ICoreWebView2Environment> g_environment;
 static SchemeCallback g_scheme_callback = nullptr;
 static void* g_scheme_user_data = nullptr;
+static BeforeBrowseCallback g_before_browse_callback = nullptr;
+static void* g_before_browse_user_data = nullptr;
 static bool g_initialized = false;
 
 // Per-webview state
@@ -155,6 +159,32 @@ void* webview_win_create(void* parent_handle, const char* url) {
                                 // Store args for response
                                 args->AddRef();
                                 g_scheme_callback(uriUtf8.c_str(), args, g_scheme_user_data);
+                                return S_OK;
+                            }
+                        ).Get(),
+                        nullptr
+                    );
+                }
+
+                // Before-browse handler
+                if (g_before_browse_callback) {
+                    instance->webview->add_NavigationStarting(
+                        Callback<ICoreWebView2NavigationStartingEventHandler>(
+                            [instance](ICoreWebView2* sender, ICoreWebView2NavigationStartingEventArgs* args) -> HRESULT {
+                                if (!g_before_browse_callback) return S_OK;
+
+                                LPWSTR uri;
+                                args->get_Uri(&uri);
+                                std::string uriUtf8 = WideToUtf8(uri);
+                                CoTaskMemFree(uri);
+
+                                BOOL isRedirected = FALSE;
+                                args->get_IsRedirected(&isRedirected);
+
+                                int cancel = g_before_browse_callback(instance, uriUtf8.c_str(), isRedirected ? 1 : 0, g_before_browse_user_data);
+                                if (cancel) {
+                                    args->put_Cancel(TRUE);
+                                }
                                 return S_OK;
                             }
                         ).Get(),
@@ -362,6 +392,14 @@ void webview_win_set_message_handler(
             nullptr
         );
     }
+}
+
+void webview_win_set_before_browse_handler(
+    int (*callback)(void*, const char*, int, void*),
+    void* user_data
+) {
+    g_before_browse_callback = callback;
+    g_before_browse_user_data = user_data;
 }
 
 } // extern "C"

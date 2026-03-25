@@ -22,6 +22,7 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
     private ISawmill _sawmill = default!;
     private readonly List<WebViewWindowNative> _browserWindows = new();
     private WebViewNative.SchemeCallback? _schemeCallbackDelegate;
+    private WebViewNative.BeforeBrowseCallback? _beforeBrowseCallbackDelegate;
 
     // Track active controls by native handle so scheme handler can route to per-control request handlers
     private readonly Dictionary<nint, WebViewControlImplNative> _activeControls = new();
@@ -88,6 +89,9 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
         {
             _schemeCallbackDelegate = OnSchemeRequest;
             WebViewNative.robust_webview_set_scheme_handler(_schemeCallbackDelegate, 0);
+
+            _beforeBrowseCallbackDelegate = OnBeforeBrowse;
+            WebViewNative.robust_webview_set_before_browse_handler(_beforeBrowseCallbackDelegate, 0);
         }
 
         _sawmill.Info("Native webview initialized");
@@ -241,6 +245,22 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
         {
             WebViewNative.robust_webview_respond_scheme(requestHandle, dataPtr, data.Length, "text/plain", 500);
         }
+    }
+
+    private unsafe int OnBeforeBrowse(nint handle, byte* urlPtr, int isRedirect, nint userData)
+    {
+        var url = Marshal.PtrToStringUTF8((nint)urlPtr) ?? "";
+
+        if (_activeControls.TryGetValue(handle, out var control))
+        {
+            if (control.HandleBeforeBrowse(url, isRedirect != 0))
+            {
+                _sawmill.Debug($"Before-browse cancelled: {url}");
+                return 1; // cancel
+            }
+        }
+
+        return 0; // allow
     }
 
     public void SetResourceMimeType(string extension, string mimeType)
