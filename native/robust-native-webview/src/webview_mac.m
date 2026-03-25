@@ -84,8 +84,40 @@ typedef struct {
 
 @end
 
+// Navigation delegate for debugging
+@interface RobustNavigationDelegate : NSObject <WKNavigationDelegate>
+@end
+
+@implementation RobustNavigationDelegate
+
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
+    NSLog(@"[webview] didStartProvisionalNavigation: %@", webView.URL);
+}
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    NSLog(@"[webview] didFinishNavigation: %@", webView.URL);
+}
+
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    NSLog(@"[webview] didFailNavigation: %@ error: %@", webView.URL, error);
+}
+
+- (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    NSLog(@"[webview] didFailProvisionalNavigation: %@ error: %@", webView.URL, error);
+}
+
+- (void)webView:(WKWebView *)webView
+    decidePolicyForNavigationAction:(WKNavigationAction *)navigationAction
+    decisionHandler:(void (^)(WKNavigationActionPolicy))decisionHandler {
+    NSLog(@"[webview] decidePolicyForNavigation: %@", navigationAction.request.URL);
+    decisionHandler(WKNavigationActionPolicyAllow);
+}
+
+@end
+
 // Static scheme handler instance
 static RobustSchemeHandler* g_scheme_handler = nil;
+static RobustNavigationDelegate* g_navigation_delegate = nil;
 
 #pragma mark - C API
 
@@ -93,6 +125,7 @@ int webview_mac_init(void) {
     if (g_initialized) return 0;
 
     g_scheme_handler = [[RobustSchemeHandler alloc] init];
+    g_navigation_delegate = [[RobustNavigationDelegate alloc] init];
     g_initialized = YES;
     return 0;
 }
@@ -134,6 +167,14 @@ void* webview_mac_create(void* parent_handle, const char* url) {
         NSRect frame = NSMakeRect(0, 0, 0, 0);
 
         instance->webview = [[WKWebView alloc] initWithFrame:frame configuration:config];
+
+        // Enable Safari Web Inspector (macOS 13.3+)
+        if ([instance->webview respondsToSelector:@selector(setInspectable:)]) {
+            [instance->webview setInspectable:YES];
+        }
+
+        // Set navigation delegate for debugging
+        instance->webview.navigationDelegate = g_navigation_delegate;
 
         // Add as subview
         [contentView addSubview:instance->webview];

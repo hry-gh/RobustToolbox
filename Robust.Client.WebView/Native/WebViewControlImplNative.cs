@@ -33,6 +33,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         get => _url;
         set
         {
+            Sawmill.Debug($"Url set: '{value}' (handle=0x{_handle:X})");
             _url = value;
             if (_handle != 0)
                 WebViewNative.robust_webview_navigate(_handle, value);
