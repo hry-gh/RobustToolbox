@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using Robust.Client.Graphics;
 using Robust.Client.UserInterface;
+using Robust.Shared.Log;
 
 namespace Robust.Client.WebView.Native;
 
@@ -16,6 +17,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
     private nint _handle;
     private string _url = "about:blank";
     private readonly List<Action<IRequestHandlerContext>> _requestHandlers = new();
+    private static readonly ISawmill Sawmill = Logger.GetSawmill("web.native.control");
 
     public WebViewControlImplNative(WebViewManagerNative manager, WebViewControl owner)
     {
@@ -46,11 +48,19 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         if (_handle != 0)
             return;
 
+        var window = _owner.Window;
         var parentHandle = GetOwnerWindowHandle();
+        Sawmill.Info($"StartBrowser: owner.Window={window} (type={window?.GetType().Name}), " +
+                     $"ownerHandle=0x{parentHandle:X}");
+
         if (parentHandle == 0)
+        {
             parentHandle = _manager.GetMainWindowHandle();
+            Sawmill.Info($"StartBrowser: fell back to main window handle=0x{parentHandle:X}");
+        }
 
         _handle = WebViewNative.robust_webview_create(parentHandle, _url);
+        Sawmill.Info($"StartBrowser: created webview handle=0x{_handle:X}, url={_url}");
 
         if (_handle != 0)
             UpdateSizeAndPosition();
@@ -117,18 +127,28 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
     {
         // Walk up the UI tree to find which IClydeWindow this control lives in
         var window = _owner.Window;
+        Sawmill.Debug($"GetOwnerWindowHandle: window={window}, isInternal={window is IClydeWindowInternal}");
+
         if (window is IClydeWindowInternal windowInternal)
         {
+            var hwnd = windowInternal.WindowsHWnd;
+            var cocoa = windowInternal.CocoaWindow;
+            var x11 = windowInternal.X11Id;
+            Sawmill.Debug($"GetOwnerWindowHandle: WindowsHWnd=0x{hwnd ?? 0:X}, " +
+                          $"CocoaWindow=0x{cocoa ?? 0:X}, X11Id={x11 ?? 0}");
+
             if (OperatingSystem.IsWindows())
-                return windowInternal.WindowsHWnd ?? 0;
+                return hwnd ?? 0;
             if (OperatingSystem.IsMacOS())
-                return windowInternal.CocoaWindow ?? 0;
+                return cocoa ?? 0;
             if (OperatingSystem.IsLinux())
-                return (nint)(windowInternal.X11Id ?? 0);
+                return (nint)(x11 ?? 0);
         }
 
         return 0;
     }
+
+    private bool _boundsLogged;
 
     private void UpdateSizeAndPosition()
     {
@@ -138,6 +158,12 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         var pos = _owner.GlobalPixelPosition;
         var width = _owner.PixelWidth;
         var height = _owner.PixelHeight;
+
+        if (!_boundsLogged)
+        {
+            Sawmill.Info($"UpdateBounds: pos=({pos.X},{pos.Y}), size=({width}x{height})");
+            _boundsLogged = true;
+        }
 
         if (width > 0 && height > 0)
             WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
