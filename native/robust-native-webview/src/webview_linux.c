@@ -213,6 +213,12 @@ void webview_linux_set_bounds(void* handle, int x, int y, int width, int height)
     // GtkPlug position is managed by the X11 parent - would need XMoveResizeWindow for repositioning
 }
 
+void webview_linux_load_html(void* handle, const char* html, const char* base_url) {
+    if (!handle || !html) return;
+    WebViewInstance* instance = (WebViewInstance*)handle;
+    webkit_web_view_load_html(instance->webview, html, base_url);
+}
+
 void webview_linux_set_scheme_handler(
     void (*callback)(const char*, void*, void*),
     void* user_data

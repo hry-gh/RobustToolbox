@@ -291,6 +291,20 @@ void webview_mac_set_bounds(void* handle, int x, int y, int width, int height) {
     [instance->webview setFrame:frame];
 }
 
+void webview_mac_load_html(void* handle, const char* html, const char* base_url) {
+    if (!handle || !html) return;
+
+    @autoreleasepool {
+        WebViewInstance* instance = (WebViewInstance*)handle;
+        NSString* htmlString = [NSString stringWithUTF8String:html];
+        NSURL* baseURL = nil;
+        if (base_url && base_url[0]) {
+            baseURL = [NSURL URLWithString:[NSString stringWithUTF8String:base_url]];
+        }
+        [instance->webview loadHTMLString:htmlString baseURL:baseURL];
+    }
+}
+
 void webview_mac_set_scheme_handler(
     void (*callback)(const char*, void*, void*),
     void* user_data

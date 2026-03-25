@@ -286,6 +286,13 @@ void webview_win_set_bounds(void* handle, int x, int y, int width, int height) {
     it->second->controller->put_Bounds(bounds);
 }
 
+void webview_win_load_html(void* handle, const char* html, const char* base_url) {
+    auto it = g_instances.find(handle);
+    if (it == g_instances.end() || !it->second->webview) return;
+    std::wstring htmlWide = Utf8ToWide(html);
+    it->second->webview->NavigateToString(htmlWide.c_str());
+}
+
 void webview_win_set_scheme_handler(
     void (*callback)(const char*, void*, void*),
     void* user_data

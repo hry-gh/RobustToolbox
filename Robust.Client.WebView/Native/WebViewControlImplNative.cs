@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
+using System.Net;
 using Robust.Client.Graphics;
 using Robust.Client.UserInterface;
 using Robust.Shared.Log;
@@ -36,8 +38,44 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
             Sawmill.Debug($"Url set: '{value}' (handle=0x{_handle:X})");
             _url = value;
             if (_handle != 0)
-                WebViewNative.robust_webview_navigate(_handle, value);
+                NavigateOrIntercept(value);
         }
+    }
+
+    private void NavigateOrIntercept(string url)
+    {
+        // Try to serve via registered request handlers (e.g. http://127.0.0.1/ fake URLs)
+        if (_requestHandlers.Count > 0 && TryHandleViaRequestHandlers(url))
+            return;
+
+        WebViewNative.robust_webview_navigate(_handle, url);
+    }
+
+    private bool TryHandleViaRequestHandlers(string url)
+    {
+        var context = new NativeRequestHandlerContext(url);
+
+        foreach (var handler in _requestHandlers)
+        {
+            handler(context);
+            if (context.IsHandled)
+            {
+                if (context.ResponseStream != null)
+                {
+                    using var reader = new StreamReader(context.ResponseStream);
+                    var content = reader.ReadToEnd();
+                    Sawmill.Debug($"Request handler served {url} ({content.Length} chars, {context.ResponseMimeType})");
+                    WebViewNative.robust_webview_load_html(_handle, content, url);
+                }
+
+                return true;
+            }
+
+            if (context.IsCancelled)
+                return true;
+        }
+
+        return false;
     }
 
     public bool IsLoading
@@ -67,7 +105,8 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
             return;
         }
 
-        _handle = WebViewNative.robust_webview_create(parentHandle, _url);
+        // Create with about:blank first, then navigate via request handler intercept
+        _handle = WebViewNative.robust_webview_create(parentHandle, null);
         Sawmill.Info($"TryCreate: created handle=0x{_handle:X}, parent=0x{parentHandle:X}, url={_url}");
 
         if (_handle != 0)
@@ -75,6 +114,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
             var pos = _owner.GlobalPixelPosition;
             Sawmill.Info($"TryCreate: bounds=({pos.X},{pos.Y},{width}x{height})");
             WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
+            NavigateOrIntercept(_url);
         }
     }
 
@@ -197,4 +237,35 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
     public void AddBeforeBrowseHandler(Action<IBeforeBrowseContext> handler) { }
     public void RemoveBeforeBrowseHandler(Action<IBeforeBrowseContext> handler) { }
+
+    private sealed class NativeRequestHandlerContext : IRequestHandlerContext
+    {
+        public bool IsNavigation => true;
+        public bool IsDownload => false;
+        public string RequestInitiator => "";
+        public string Url { get; }
+        public string Method => "GET";
+        public bool IsHandled { get; private set; }
+        public bool IsCancelled { get; private set; }
+
+        public Stream? ResponseStream { get; private set; }
+        public string ResponseMimeType { get; private set; } = "text/html";
+
+        public NativeRequestHandlerContext(string url)
+        {
+            Url = url;
+        }
+
+        public void DoCancel()
+        {
+            IsCancelled = true;
+        }
+
+        public void DoRespondStream(Stream stream, string contentType, HttpStatusCode code = HttpStatusCode.OK)
+        {
+            IsHandled = true;
+            ResponseStream = stream;
+            ResponseMimeType = contentType;
+        }
+    }
 }

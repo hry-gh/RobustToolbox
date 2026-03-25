@@ -58,6 +58,9 @@ internal static partial class WebViewNative
     [DllImport(Lib)]
     internal static extern void robust_webview_set_bounds(nint handle, int x, int y, int width, int height);
 
+    [DllImport(Lib, CharSet = CharSet.Ansi)]
+    internal static extern void robust_webview_load_html(nint handle, string html, string? baseUrl);
+
     [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
     internal unsafe delegate void SchemeCallback(byte* url, nint requestHandle, nint userData);
 

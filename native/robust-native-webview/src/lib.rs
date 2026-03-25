@@ -27,6 +27,7 @@ mod ffi {
         pub fn webview_win_execute_js(handle: *mut c_void, code: *const c_char);
         pub fn webview_win_set_size(handle: *mut c_void, width: c_int, height: c_int);
         pub fn webview_win_set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int);
+        pub fn webview_win_load_html(handle: *mut c_void, html: *const c_char, base_url: *const c_char);
         pub fn webview_win_set_scheme_handler(
             callback: Option<unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_void)>,
             user_data: *mut c_void,
@@ -67,6 +68,7 @@ mod ffi {
         pub fn webview_mac_execute_js(handle: *mut c_void, code: *const c_char);
         pub fn webview_mac_set_size(handle: *mut c_void, width: c_int, height: c_int);
         pub fn webview_mac_set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int);
+        pub fn webview_mac_load_html(handle: *mut c_void, html: *const c_char, base_url: *const c_char);
         pub fn webview_mac_set_scheme_handler(
             callback: Option<unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_void)>,
             user_data: *mut c_void,
@@ -107,6 +109,7 @@ mod ffi {
         pub fn webview_linux_execute_js(handle: *mut c_void, code: *const c_char);
         pub fn webview_linux_set_size(handle: *mut c_void, width: c_int, height: c_int);
         pub fn webview_linux_set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int);
+        pub fn webview_linux_load_html(handle: *mut c_void, html: *const c_char, base_url: *const c_char);
         pub fn webview_linux_set_scheme_handler(
             callback: Option<unsafe extern "C" fn(*const c_char, *mut c_void, *mut c_void)>,
             user_data: *mut c_void,
@@ -356,6 +359,20 @@ pub extern "C" fn robust_webview_set_size(handle: *mut c_void, width: c_int, hei
 
     #[cfg(target_os = "linux")]
     unsafe { ffi::webview_linux_set_size(handle, width, height); }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn robust_webview_load_html(handle: *mut c_void, html: *const c_char, base_url: *const c_char) {
+    if handle.is_null() || html.is_null() { return; }
+
+    #[cfg(target_os = "windows")]
+    unsafe { ffi::webview_win_load_html(handle, html, base_url); }
+
+    #[cfg(target_os = "macos")]
+    unsafe { ffi::webview_mac_load_html(handle, html, base_url); }
+
+    #[cfg(target_os = "linux")]
+    unsafe { ffi::webview_linux_load_html(handle, html, base_url); }
 }
 
 #[unsafe(no_mangle)]
