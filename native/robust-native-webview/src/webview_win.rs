@@ -160,7 +160,18 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     };
 
     let parent = HWND(parent_handle as *mut _);
-    eprintln!("[webview_win] create: parent={:?}", parent);
+    unsafe {
+        let is_window = IsWindow(parent).as_bool();
+        let is_visible = IsWindowVisible(parent).as_bool();
+        let mut parent_rect = RECT::default();
+        let _ = GetWindowRect(parent, &mut parent_rect);
+        let mut client_rect = RECT::default();
+        let _ = GetClientRect(parent, &mut client_rect);
+        eprintln!("[webview_win] create: parent={:?} is_window={} is_visible={} window_rect=({},{},{},{}) client_rect=({},{},{},{})",
+            parent, is_window, is_visible,
+            parent_rect.left, parent_rect.top, parent_rect.right, parent_rect.bottom,
+            client_rect.left, client_rect.top, client_rect.right, client_rect.bottom);
+    }
 
     let ready = Arc::new(AtomicBool::new(false));
     let ready2 = ready.clone();
