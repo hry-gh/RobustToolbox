@@ -140,7 +140,18 @@ pub fn shutdown() {
     *INITIALIZED.lock().unwrap() = false;
 }
 
-pub fn pump() {}
+pub fn pump() {
+    // WebView2 needs the Win32 message loop to render.
+    // SDL3 may not dispatch all messages WebView2 needs,
+    // so we pump any pending messages here.
+    unsafe {
+        let mut msg = MSG::default();
+        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            let _ = TranslateMessage(&msg);
+            DispatchMessageW(&msg);
+        }
+    }
+}
 
 pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     if parent_handle.is_null() || !*INITIALIZED.lock().unwrap() {
