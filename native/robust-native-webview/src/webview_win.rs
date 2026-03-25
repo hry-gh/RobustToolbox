@@ -182,6 +182,14 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         let _ = controller.SetBounds(bounds);
     }
 
+    // Enable devtools (F12)
+    unsafe {
+        if let Ok(settings) = webview.Settings() {
+            let _ = settings.SetAreDevToolsEnabled(true);
+            let _ = settings.SetAreDefaultContextMenusEnabled(true);
+        }
+    }
+
     // Set up scheme handler for res://*
     if load_scheme_cb().is_some() {
         unsafe {
