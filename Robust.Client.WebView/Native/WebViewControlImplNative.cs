@@ -161,6 +161,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
     /// <summary>
     /// Rewrite http://127.0.0.1/ URLs to res:// so the native scheme handler can serve them.
+    /// On Windows, WebView2 can intercept http://127.0.0.1/* directly, so no rewrite needed.
     /// </summary>
     private static string RewriteUrlForNative(string url)
     {

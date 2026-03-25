@@ -95,8 +95,18 @@ pub fn init() -> c_int {
         }),
     );
 
+    // Register "res" as a custom scheme so AddWebResourceRequestedFilter can intercept it.
+    let options = CoreWebView2EnvironmentOptions::default();
+    let scheme: ICoreWebView2CustomSchemeRegistration =
+        CoreWebView2CustomSchemeRegistration::new("res".to_string()).into();
+    unsafe {
+        let _ = scheme.SetHasAuthorityComponent(true);
+        options.set_scheme_registrations(vec![Some(scheme)]);
+    }
+    let options: ICoreWebView2EnvironmentOptions = options.into();
+
     let hr = unsafe {
-        CreateCoreWebView2EnvironmentWithOptions(None, None, None, &handler)
+        CreateCoreWebView2EnvironmentWithOptions(None, None, Some(&options), &handler)
     };
 
     if hr.is_err() {
