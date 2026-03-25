@@ -3,7 +3,8 @@
 
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <OutputType>WinExe</OutputType>
+    <OutputType Condition="'$(RobustCef)' == 'true'">WinExe</OutputType>
+    <OutputType Condition="'$(RobustCef)' != 'true'">Library</OutputType>
     <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <CETCompat>false</CETCompat>
   </PropertyGroup>
