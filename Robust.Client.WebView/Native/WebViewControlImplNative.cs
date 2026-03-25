@@ -69,21 +69,23 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         if (parentHandle == 0 || width <= 0 || height <= 0)
             return;
 
-        // Create with about:blank, then navigate
-        _handle = WebViewNative.robust_webview_create(parentHandle, null);
-        Sawmill.Info($"Created webview handle=0x{_handle:X}, parent=0x{parentHandle:X}");
+        // Register for scheme handling BEFORE create so the initial load can be served
+        _manager.RegisterControl(this);
+
+        var nativeUrl = RewriteUrlForNative(_url);
+        _handle = WebViewNative.robust_webview_create(parentHandle, nativeUrl);
+        Sawmill.Info($"Created webview handle=0x{_handle:X}, parent=0x{parentHandle:X}, url={nativeUrl}");
 
         if (_handle != 0)
         {
-            _manager.RegisterControl(_handle, this);
+            _manager.RegisterControlHandle(_handle, this);
 
             var pos = _owner.GlobalPixelPosition;
             WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
-
-            // Navigate to the URL (rewriting to res:// if needed)
-            var nativeUrl = RewriteUrlForNative(_url);
-            Sawmill.Info($"Navigating to: {nativeUrl} (original: {_url})");
-            WebViewNative.robust_webview_navigate(_handle, nativeUrl);
+        }
+        else
+        {
+            _manager.UnregisterControl(0, this);
         }
     }
 
@@ -94,7 +96,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         if (_handle == 0)
             return;
 
-        _manager.UnregisterControl(_handle);
+        _manager.UnregisterControl(_handle, this);
         WebViewNative.robust_webview_destroy(_handle);
         _handle = 0;
     }

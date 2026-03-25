@@ -24,8 +24,10 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
     private WebViewNative.SchemeCallback? _schemeCallbackDelegate;
     private WebViewNative.BeforeBrowseCallback? _beforeBrowseCallbackDelegate;
 
-    // Track active controls by native handle so scheme handler can route to per-control request handlers
-    private readonly Dictionary<nint, WebViewControlImplNative> _activeControls = new();
+    // All controls with request handlers (for scheme routing — doesn't need handle)
+    private readonly List<WebViewControlImplNative> _controlList = new();
+    // Handle → control (for before-browse routing — needs handle)
+    private readonly Dictionary<nint, WebViewControlImplNative> _controlsByHandle = new();
 
     private readonly Dictionary<string, string> _resourceMimeTypes = new()
     {
@@ -136,14 +138,20 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
         _browserWindows.Remove(window);
     }
 
-    internal void RegisterControl(nint handle, WebViewControlImplNative control)
+    internal void RegisterControl(WebViewControlImplNative control)
     {
-        _activeControls[handle] = control;
+        _controlList.Add(control);
     }
 
-    internal void UnregisterControl(nint handle)
+    internal void RegisterControlHandle(nint handle, WebViewControlImplNative control)
     {
-        _activeControls.Remove(handle);
+        _controlsByHandle[handle] = control;
+    }
+
+    internal void UnregisterControl(nint handle, WebViewControlImplNative control)
+    {
+        _controlList.Remove(control);
+        _controlsByHandle.Remove(handle);
     }
 
     internal nint GetMainWindowHandle()
@@ -181,7 +189,7 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
                 httpUrl = "http://127.0.0.1" + new Uri(url).AbsolutePath;
             }
 
-            foreach (var control in _activeControls.Values)
+            foreach (var control in _controlList)
             {
                 if (control.TryHandleSchemeRequest(httpUrl, out var stream, out var mimeType, out var statusCode)
                     && stream != null)
@@ -251,7 +259,7 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
     {
         var url = Marshal.PtrToStringUTF8((nint)urlPtr) ?? "";
 
-        if (_activeControls.TryGetValue(handle, out var control))
+        if (_controlsByHandle.TryGetValue(handle, out var control))
         {
             if (control.HandleBeforeBrowse(url, isRedirect != 0))
             {
