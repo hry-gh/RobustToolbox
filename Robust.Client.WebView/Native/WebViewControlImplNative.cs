@@ -16,6 +16,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
     private readonly WebViewControl _owner;
     private nint _handle;
     private string _url = "about:blank";
+    private bool _wantOpen;
     private readonly List<Action<IRequestHandlerContext>> _requestHandlers = new();
     private static readonly ISawmill Sawmill = Logger.GetSawmill("web.native.control");
 
@@ -45,29 +46,41 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
     public void StartBrowser()
     {
-        if (_handle != 0)
+        _wantOpen = true;
+        TryCreateWebView();
+    }
+
+    private void TryCreateWebView()
+    {
+        if (_handle != 0 || !_wantOpen)
             return;
 
-        var window = _owner.Window;
         var parentHandle = GetOwnerWindowHandle();
-        Sawmill.Info($"StartBrowser: owner.Window={window} (type={window?.GetType().Name}), " +
-                     $"ownerHandle=0x{parentHandle:X}");
+        var width = _owner.PixelWidth;
+        var height = _owner.PixelHeight;
 
-        if (parentHandle == 0)
+        // Defer until we have a valid window and non-zero size
+        if (parentHandle == 0 || width <= 0 || height <= 0)
         {
-            parentHandle = _manager.GetMainWindowHandle();
-            Sawmill.Info($"StartBrowser: fell back to main window handle=0x{parentHandle:X}");
+            Sawmill.Debug($"TryCreate: deferred (parent=0x{parentHandle:X}, size={width}x{height})");
+            return;
         }
 
         _handle = WebViewNative.robust_webview_create(parentHandle, _url);
-        Sawmill.Info($"StartBrowser: created webview handle=0x{_handle:X}, url={_url}");
+        Sawmill.Info($"TryCreate: created handle=0x{_handle:X}, parent=0x{parentHandle:X}, url={_url}");
 
         if (_handle != 0)
-            UpdateSizeAndPosition();
+        {
+            var pos = _owner.GlobalPixelPosition;
+            Sawmill.Info($"TryCreate: bounds=({pos.X},{pos.Y},{width}x{height})");
+            WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
+        }
     }
 
     public void CloseBrowser()
     {
+        _wantOpen = false;
+
         if (_handle == 0)
             return;
 
@@ -113,44 +126,43 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
     public void Resized()
     {
-        UpdateSizeAndPosition();
+        if (_handle == 0)
+        {
+            TryCreateWebView();
+            return;
+        }
+
+        UpdateBounds();
     }
 
     public void Draw(DrawingHandleScreen handle)
     {
-        // Native webview renders itself as an OS overlay - nothing to draw here.
-        // Just ensure position is up to date in case the control moved.
-        UpdateSizeAndPosition();
+        if (_handle == 0)
+        {
+            TryCreateWebView();
+            return;
+        }
+
+        UpdateBounds();
     }
 
     private nint GetOwnerWindowHandle()
     {
-        // Walk up the UI tree to find which IClydeWindow this control lives in
         var window = _owner.Window;
-        Sawmill.Debug($"GetOwnerWindowHandle: window={window}, isInternal={window is IClydeWindowInternal}");
-
         if (window is IClydeWindowInternal windowInternal)
         {
-            var hwnd = windowInternal.WindowsHWnd;
-            var cocoa = windowInternal.CocoaWindow;
-            var x11 = windowInternal.X11Id;
-            Sawmill.Debug($"GetOwnerWindowHandle: WindowsHWnd=0x{hwnd ?? 0:X}, " +
-                          $"CocoaWindow=0x{cocoa ?? 0:X}, X11Id={x11 ?? 0}");
-
             if (OperatingSystem.IsWindows())
-                return hwnd ?? 0;
+                return windowInternal.WindowsHWnd ?? 0;
             if (OperatingSystem.IsMacOS())
-                return cocoa ?? 0;
+                return windowInternal.CocoaWindow ?? 0;
             if (OperatingSystem.IsLinux())
-                return (nint)(x11 ?? 0);
+                return (nint)(windowInternal.X11Id ?? 0);
         }
 
         return 0;
     }
 
-    private bool _boundsLogged;
-
-    private void UpdateSizeAndPosition()
+    private void UpdateBounds()
     {
         if (_handle == 0)
             return;
@@ -158,12 +170,6 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         var pos = _owner.GlobalPixelPosition;
         var width = _owner.PixelWidth;
         var height = _owner.PixelHeight;
-
-        if (!_boundsLogged)
-        {
-            Sawmill.Info($"UpdateBounds: pos=({pos.X},{pos.Y}), size=({width}x{height})");
-            _boundsLogged = true;
-        }
 
         if (width > 0 && height > 0)
             WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
