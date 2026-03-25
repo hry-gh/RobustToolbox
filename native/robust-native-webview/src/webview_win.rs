@@ -210,12 +210,18 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         let _ = controller.SetBounds(bounds);
     }
 
-    // Enable devtools (F12)
+    // Enable devtools (F12) and ensure visible
     unsafe {
         if let Ok(settings) = webview.Settings() {
             let _ = settings.SetAreDevToolsEnabled(true);
             let _ = settings.SetAreDefaultContextMenusEnabled(true);
         }
+        let _ = controller.SetIsVisible(true);
+
+        // Debug: check if controller thinks it's visible
+        let mut visible = BOOL(0);
+        let _ = controller.IsVisible(&mut visible);
+        eprintln!("[webview_win] create: visible={}", visible.as_bool());
     }
 
     // Set up scheme handler for res://*
@@ -407,14 +413,18 @@ pub fn execute_js(handle: *mut c_void, code: *const c_char) {
 pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
+        eprintln!("[webview_win] set_size: {}x{}", width, height);
         let _ = instance.controller.SetBounds(RECT { left: 0, top: 0, right: width, bottom: height });
+        let _ = instance.controller.SetIsVisible(true);
     }
 }
 
 pub fn set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
+        eprintln!("[webview_win] set_bounds: ({},{}) {}x{}", x, y, width, height);
         let _ = instance.controller.SetBounds(RECT { left: x, top: y, right: x + width, bottom: y + height });
+        let _ = instance.controller.SetIsVisible(true);
     }
 }
 
