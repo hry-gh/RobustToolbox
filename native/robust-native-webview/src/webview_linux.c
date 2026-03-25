@@ -206,6 +206,13 @@ void webview_linux_set_size(void* handle, int width, int height) {
     gtk_widget_set_size_request(GTK_WIDGET(instance->webview), width, height);
 }
 
+void webview_linux_set_bounds(void* handle, int x, int y, int width, int height) {
+    if (!handle) return;
+    WebViewInstance* instance = (WebViewInstance*)handle;
+    gtk_widget_set_size_request(GTK_WIDGET(instance->webview), width, height);
+    // GtkPlug position is managed by the X11 parent - would need XMoveResizeWindow for repositioning
+}
+
 void webview_linux_set_scheme_handler(
     void (*callback)(const char*, void*, void*),
     void* user_data

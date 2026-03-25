@@ -279,6 +279,13 @@ void webview_win_set_size(void* handle, int width, int height) {
     it->second->controller->put_Bounds(bounds);
 }
 
+void webview_win_set_bounds(void* handle, int x, int y, int width, int height) {
+    auto it = g_instances.find(handle);
+    if (it == g_instances.end() || !it->second->controller) return;
+    RECT bounds = { x, y, x + width, y + height };
+    it->second->controller->put_Bounds(bounds);
+}
+
 void webview_win_set_scheme_handler(
     void (*callback)(const char*, void*, void*),
     void* user_data

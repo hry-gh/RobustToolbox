@@ -129,12 +129,11 @@ void* webview_mac_create(void* parent_handle, const char* url) {
         instance->message_handler.instance = instance;
         [config.userContentController addScriptMessageHandler:instance->message_handler name:@"robust"];
 
-        // Create webview filling the content view
+        // Create webview with zero frame - caller sets bounds via set_bounds
         NSView* contentView = [parent contentView];
-        NSRect frame = contentView.bounds;
+        NSRect frame = NSMakeRect(0, 0, 0, 0);
 
         instance->webview = [[WKWebView alloc] initWithFrame:frame configuration:config];
-        instance->webview.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
 
         // Add as subview
         [contentView addSubview:instance->webview];
@@ -236,7 +235,18 @@ void webview_mac_execute_js(void* handle, const char* code) {
 void webview_mac_set_size(void* handle, int width, int height) {
     if (!handle) return;
     WebViewInstance* instance = (WebViewInstance*)handle;
-    NSRect frame = NSMakeRect(0, 0, width, height);
+    NSRect oldFrame = instance->webview.frame;
+    NSRect frame = NSMakeRect(oldFrame.origin.x, oldFrame.origin.y, width, height);
+    [instance->webview setFrame:frame];
+}
+
+void webview_mac_set_bounds(void* handle, int x, int y, int width, int height) {
+    if (!handle) return;
+    WebViewInstance* instance = (WebViewInstance*)handle;
+    NSView* contentView = [instance->parent contentView];
+    // macOS NSView origin is bottom-left, but game UI uses top-left origin
+    CGFloat parentHeight = contentView.bounds.size.height;
+    NSRect frame = NSMakeRect(x, parentHeight - y - height, width, height);
     [instance->webview setFrame:frame];
 }
 

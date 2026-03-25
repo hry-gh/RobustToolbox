@@ -46,7 +46,10 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         if (_handle != 0)
             return;
 
-        var parentHandle = _manager.GetMainWindowHandle();
+        var parentHandle = GetOwnerWindowHandle();
+        if (parentHandle == 0)
+            parentHandle = _manager.GetMainWindowHandle();
+
         _handle = WebViewNative.robust_webview_create(parentHandle, _url);
 
         if (_handle != 0)
@@ -110,16 +113,34 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         UpdateSizeAndPosition();
     }
 
+    private nint GetOwnerWindowHandle()
+    {
+        // Walk up the UI tree to find which IClydeWindow this control lives in
+        var window = _owner.Window;
+        if (window is IClydeWindowInternal windowInternal)
+        {
+            if (OperatingSystem.IsWindows())
+                return windowInternal.WindowsHWnd ?? 0;
+            if (OperatingSystem.IsMacOS())
+                return windowInternal.CocoaWindow ?? 0;
+            if (OperatingSystem.IsLinux())
+                return (nint)(windowInternal.X11Id ?? 0);
+        }
+
+        return 0;
+    }
+
     private void UpdateSizeAndPosition()
     {
         if (_handle == 0)
             return;
 
+        var pos = _owner.GlobalPixelPosition;
         var width = _owner.PixelWidth;
         var height = _owner.PixelHeight;
 
         if (width > 0 && height > 0)
-            WebViewNative.robust_webview_set_size(_handle, width, height);
+            WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
     }
 
     // Input forwarding - native webview handles its own input since it's an OS-level view
