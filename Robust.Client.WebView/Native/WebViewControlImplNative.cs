@@ -38,44 +38,11 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
             Sawmill.Debug($"Url set: '{value}' (handle=0x{_handle:X})");
             _url = value;
             if (_handle != 0)
-                NavigateOrIntercept(value);
-        }
-    }
-
-    private void NavigateOrIntercept(string url)
-    {
-        // Try to serve via registered request handlers (e.g. http://127.0.0.1/ fake URLs)
-        if (_requestHandlers.Count > 0 && TryHandleViaRequestHandlers(url))
-            return;
-
-        WebViewNative.robust_webview_navigate(_handle, url);
-    }
-
-    private bool TryHandleViaRequestHandlers(string url)
-    {
-        var context = new NativeRequestHandlerContext(url);
-
-        foreach (var handler in _requestHandlers)
-        {
-            handler(context);
-            if (context.IsHandled)
             {
-                if (context.ResponseStream != null)
-                {
-                    using var reader = new StreamReader(context.ResponseStream);
-                    var content = reader.ReadToEnd();
-                    Sawmill.Debug($"Request handler served {url} ({content.Length} chars, {context.ResponseMimeType})");
-                    WebViewNative.robust_webview_load_html(_handle, content, url);
-                }
-
-                return true;
+                var nativeUrl = RewriteUrlForNative(value);
+                WebViewNative.robust_webview_navigate(_handle, nativeUrl);
             }
-
-            if (context.IsCancelled)
-                return true;
         }
-
-        return false;
     }
 
     public bool IsLoading
@@ -100,21 +67,23 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
         // Defer until we have a valid window and non-zero size
         if (parentHandle == 0 || width <= 0 || height <= 0)
-        {
-            Sawmill.Debug($"TryCreate: deferred (parent=0x{parentHandle:X}, size={width}x{height})");
             return;
-        }
 
-        // Create with about:blank first, then navigate via request handler intercept
+        // Create with about:blank, then navigate
         _handle = WebViewNative.robust_webview_create(parentHandle, null);
-        Sawmill.Info($"TryCreate: created handle=0x{_handle:X}, parent=0x{parentHandle:X}, url={_url}");
+        Sawmill.Info($"Created webview handle=0x{_handle:X}, parent=0x{parentHandle:X}");
 
         if (_handle != 0)
         {
+            _manager.RegisterControl(_handle, this);
+
             var pos = _owner.GlobalPixelPosition;
-            Sawmill.Info($"TryCreate: bounds=({pos.X},{pos.Y},{width}x{height})");
             WebViewNative.robust_webview_set_bounds(_handle, pos.X, pos.Y, width, height);
-            NavigateOrIntercept(_url);
+
+            // Navigate to the URL (rewriting to res:// if needed)
+            var nativeUrl = RewriteUrlForNative(_url);
+            Sawmill.Info($"Navigating to: {nativeUrl} (original: {_url})");
+            WebViewNative.robust_webview_navigate(_handle, nativeUrl);
         }
     }
 
@@ -125,6 +94,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         if (_handle == 0)
             return;
 
+        _manager.UnregisterControl(_handle);
         WebViewNative.robust_webview_destroy(_handle);
         _handle = 0;
     }
@@ -185,6 +155,48 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
         }
 
         UpdateBounds();
+    }
+
+    /// <summary>
+    /// Rewrite http://127.0.0.1/ URLs to res:// so the native scheme handler can serve them.
+    /// </summary>
+    private static string RewriteUrlForNative(string url)
+    {
+        if (url.StartsWith("http://127.0.0.1/", StringComparison.OrdinalIgnoreCase))
+            return "res://" + url.Substring("http://127.0.0.1".Length);
+
+        return url;
+    }
+
+    /// <summary>
+    /// Called by the manager's scheme handler to try serving a request through
+    /// this control's registered request handlers.
+    /// </summary>
+    internal bool TryHandleSchemeRequest(string url, out Stream? stream, out string mimeType, out int statusCode)
+    {
+        stream = null;
+        mimeType = "application/octet-stream";
+        statusCode = 404;
+
+        var context = new NativeRequestHandlerContext(url);
+
+        foreach (var handler in _requestHandlers)
+        {
+            handler(context);
+
+            if (context.IsHandled && context.ResponseStream != null)
+            {
+                stream = context.ResponseStream;
+                mimeType = context.ResponseMimeType;
+                statusCode = (int)context.ResponseStatusCode;
+                return true;
+            }
+
+            if (context.IsCancelled)
+                return false;
+        }
+
+        return false;
     }
 
     private nint GetOwnerWindowHandle()
@@ -250,6 +262,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
 
         public Stream? ResponseStream { get; private set; }
         public string ResponseMimeType { get; private set; } = "text/html";
+        public HttpStatusCode ResponseStatusCode { get; private set; } = HttpStatusCode.OK;
 
         public NativeRequestHandlerContext(string url)
         {
@@ -266,6 +279,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
             IsHandled = true;
             ResponseStream = stream;
             ResponseMimeType = contentType;
+            ResponseStatusCode = code;
         }
     }
 }

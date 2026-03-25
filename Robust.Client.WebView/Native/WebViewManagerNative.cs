@@ -23,6 +23,9 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
     private readonly List<WebViewWindowNative> _browserWindows = new();
     private WebViewNative.SchemeCallback? _schemeCallbackDelegate;
 
+    // Track active controls by native handle so scheme handler can route to per-control request handlers
+    private readonly Dictionary<nint, WebViewControlImplNative> _activeControls = new();
+
     private readonly Dictionary<string, string> _resourceMimeTypes = new()
     {
         { "aac", "audio/aac" },
@@ -129,6 +132,16 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
         _browserWindows.Remove(window);
     }
 
+    internal void RegisterControl(nint handle, WebViewControlImplNative control)
+    {
+        _activeControls[handle] = control;
+    }
+
+    internal void UnregisterControl(nint handle)
+    {
+        _activeControls.Remove(handle);
+    }
+
     internal nint GetMainWindowHandle()
     {
         var mainWindow = _clyde.MainWindow as IClydeWindowInternal;
@@ -151,62 +164,82 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
     {
         var url = Marshal.PtrToStringUTF8((nint)urlPtr) ?? "";
 
-        _sawmill.Debug($"Handling res:// request: {url}");
+        _sawmill.Debug($"Scheme request: {url}");
 
         try
         {
+            // First, try per-control request handlers.
+            // We rewrite res:// back to http://127.0.0.1/ so content-side handlers
+            // see the URL format they expect.
+            var httpUrl = url;
+            if (url.StartsWith("res://", StringComparison.OrdinalIgnoreCase))
+            {
+                httpUrl = "http://127.0.0.1" + new Uri(url).AbsolutePath;
+            }
+
+            foreach (var control in _activeControls.Values)
+            {
+                if (control.TryHandleSchemeRequest(httpUrl, out var stream, out var mimeType, out var statusCode)
+                    && stream != null)
+                {
+                    _sawmill.Debug($"Scheme request handled by control: {url} -> {mimeType} ({statusCode})");
+                    RespondWithStream(requestHandle, stream, mimeType, statusCode);
+                    return;
+                }
+            }
+
+            // Fall back to engine content resources
             var uri = new Uri(url);
             var resPath = new ResPath(uri.AbsolutePath);
 
-            if (_resourceManager.TryContentFileRead(resPath, out var stream))
+            if (_resourceManager.TryContentFileRead(resPath, out var contentStream))
             {
                 if (!TryGetResourceMimeType(resPath.Extension, out var mime))
                     mime = "application/octet-stream";
 
-                using var ms = new MemoryStream();
-                stream.CopyTo(ms);
-                var data = ms.ToArray();
-
-                fixed (byte* dataPtr = data)
-                {
-                    WebViewNative.robust_webview_respond_scheme(
-                        requestHandle,
-                        dataPtr,
-                        data.Length,
-                        mime,
-                        200);
-                }
-
-                stream.Dispose();
+                RespondWithStream(requestHandle, contentStream, mime, 200);
+                contentStream.Dispose();
             }
             else
             {
-                var notFoundData = Encoding.UTF8.GetBytes("Not found");
-                fixed (byte* dataPtr = notFoundData)
-                {
-                    WebViewNative.robust_webview_respond_scheme(
-                        requestHandle,
-                        dataPtr,
-                        notFoundData.Length,
-                        "text/plain",
-                        404);
-                }
+                _sawmill.Debug($"Scheme request not found: {url}");
+                RespondNotFound(requestHandle);
             }
         }
         catch (Exception ex)
         {
-            _sawmill.Error($"Error handling res:// request: {ex}");
+            _sawmill.Error($"Error handling scheme request: {ex}");
+            RespondError(requestHandle, ex.Message);
+        }
+    }
 
-            var errorData = Encoding.UTF8.GetBytes($"Error: {ex.Message}");
-            fixed (byte* dataPtr = errorData)
-            {
-                WebViewNative.robust_webview_respond_scheme(
-                    requestHandle,
-                    dataPtr,
-                    errorData.Length,
-                    "text/plain",
-                    500);
-            }
+    private unsafe void RespondWithStream(nint requestHandle, Stream stream, string mimeType, int statusCode)
+    {
+        using var ms = new MemoryStream();
+        stream.CopyTo(ms);
+        var data = ms.ToArray();
+
+        fixed (byte* dataPtr = data)
+        {
+            WebViewNative.robust_webview_respond_scheme(requestHandle, dataPtr, data.Length, mimeType, statusCode);
+        }
+    }
+
+    private unsafe void RespondNotFound(nint requestHandle)
+    {
+        var data = Encoding.UTF8.GetBytes("Not found");
+        fixed (byte* dataPtr = data)
+        {
+            WebViewNative.robust_webview_respond_scheme(requestHandle, dataPtr, data.Length, "text/plain", 404);
+        }
+    }
+
+    private unsafe void RespondError(nint requestHandle, string message)
+    {
+        var data = Encoding.UTF8.GetBytes($"Error: {message}");
+        fixed (byte* dataPtr = data)
+        {
+            WebViewNative.robust_webview_respond_scheme(requestHandle, dataPtr, data.Length, "text/plain", 500);
         }
     }
 
