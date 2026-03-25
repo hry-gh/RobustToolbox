@@ -162,7 +162,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     let parent = HWND(parent_handle as *mut _);
     unsafe {
         let is_window = IsWindow(Some(parent)).as_bool();
-        let is_visible = IsWindowVisible(Some(parent)).as_bool();
+        let is_visible = IsWindowVisible(parent).as_bool();
         let mut parent_rect = RECT::default();
         let _ = GetWindowRect(parent, &mut parent_rect);
         let mut client_rect = RECT::default();
