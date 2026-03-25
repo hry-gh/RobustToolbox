@@ -8,14 +8,29 @@
     <CETCompat>false</CETCompat>
   </PropertyGroup>
 
+  <PropertyGroup>
+    <RobustCef Condition="'$(RobustCef)' == ''">true</RobustCef>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(RobustCef)' == 'true'">
+    <DefineConstants>$(DefineConstants);ROBUST_CEF</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="JetBrains.Annotations" />
-    <PackageReference Include="Robust.Natives.Cef" />
     <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
 
-  <ItemGroup>
+  <ItemGroup Condition="'$(RobustCef)' == 'true'">
+    <PackageReference Include="Robust.Natives.Cef" />
     <ProjectReference Include="..\cefglue\CefGlue\CefGlue.csproj" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(RobustCef)' != 'true'">
+    <Compile Remove="Cef\**" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Robust.Client\Robust.Client.csproj" />
     <ProjectReference Include="..\Robust.Shared.Maths\Robust.Shared.Maths.csproj" />
     <ProjectReference Include="..\Robust.Shared\Robust.Shared.csproj" />

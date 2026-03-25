@@ -1,8 +1,10 @@
-﻿using System;
+using System;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.InteropServices;
 using Robust.Client.WebView;
+#if ROBUST_CEF
 using Robust.Client.WebView.Cef;
+#endif
 using Robust.Client.WebView.Headless;
 using Robust.Client.WebView.Native;
 using Robust.Client.WebViewHook;
@@ -58,8 +60,8 @@ namespace Robust.Client.WebView
                         sawmill.Info("Using native webview backend");
                         return native;
                     }
-                    sawmill.Warning("Native webview backend unavailable, falling back to CEF");
-                    return new WebViewManagerCef();
+                    sawmill.Warning("Native webview backend unavailable, falling back");
+                    return CreateCefOrHeadless(sawmill);
 
                 case "auto":
                     if (TryCreateNativeBackend(out native))
@@ -67,14 +69,23 @@ namespace Robust.Client.WebView
                         sawmill.Info("Using native webview backend (auto-selected)");
                         return native;
                     }
-                    sawmill.Info("Using CEF webview backend (auto-selected)");
-                    return new WebViewManagerCef();
+                    return CreateCefOrHeadless(sawmill);
 
                 case "cef":
                 default:
-                    sawmill.Info("Using CEF webview backend");
-                    return new WebViewManagerCef();
+                    return CreateCefOrHeadless(sawmill);
             }
+        }
+
+        private static IWebViewManagerImpl CreateCefOrHeadless(ISawmill sawmill)
+        {
+#if ROBUST_CEF
+            sawmill.Info("Using CEF webview backend");
+            return new WebViewManagerCef();
+#else
+            sawmill.Warning("CEF not available, using headless webview");
+            return new WebViewManagerHeadless();
+#endif
         }
 
         private static bool TryCreateNativeBackend([NotNullWhen(true)] out IWebViewManagerImpl? impl)
@@ -86,7 +97,6 @@ namespace Robust.Client.WebView
                 var result = WebViewNative.robust_webview_init();
                 if (result == 0)
                 {
-                    // Shutdown immediately - the real init will happen in Initialize()
                     WebViewNative.robust_webview_shutdown();
                     impl = new WebViewManagerNative();
                     return true;
