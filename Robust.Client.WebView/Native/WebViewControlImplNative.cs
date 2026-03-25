@@ -166,7 +166,7 @@ internal sealed class WebViewControlImplNative : IWebViewControlImpl
     private static string RewriteUrlForNative(string url)
     {
         if (url.StartsWith("http://127.0.0.1/", StringComparison.OrdinalIgnoreCase))
-            return "res://" + url.Substring("http://127.0.0.1".Length);
+            return "res://content" + url.Substring("http://127.0.0.1".Length);
 
         return url;
     }
