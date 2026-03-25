@@ -13,8 +13,14 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::platform::*;
 
+// Wrapper to make COM pointers Send for static storage.
+// Only accessed from the main (UI) thread in practice.
+struct SendCom<T>(T);
+unsafe impl<T> Send for SendCom<T> {}
+unsafe impl<T> Sync for SendCom<T> {}
+
 // Global state
-static ENVIRONMENT: Mutex<Option<ICoreWebView2Environment>> = Mutex::new(None);
+static ENVIRONMENT: Mutex<Option<SendCom<ICoreWebView2Environment>>> = Mutex::new(None);
 static INSTANCES: Mutex<Option<HashMap<usize, ()>>> = Mutex::new(None);
 static SCHEME_CB: Mutex<Option<(SchemeCallbackFn, usize)>> = Mutex::new(None);
 static BEFORE_BROWSE_CB: Mutex<Option<(BeforeBrowseCallbackFn, usize)>> = Mutex::new(None);
@@ -32,6 +38,7 @@ fn load_bb_cb() -> Option<(BeforeBrowseCallbackFn, *mut c_void)> {
 struct WinWebView {
     controller: ICoreWebView2Controller,
     webview: ICoreWebView2,
+    #[allow(dead_code)]
     parent: HWND,
     message_callback: Option<MessageCallbackFn>,
     message_user_data: *mut c_void,
@@ -40,12 +47,15 @@ struct WinWebView {
 unsafe impl Send for WinWebView {}
 unsafe impl Sync for WinWebView {}
 
-fn utf8_to_wide(s: &str) -> HSTRING {
+fn to_hstring(s: &str) -> HSTRING {
     HSTRING::from(s)
 }
 
-fn wide_to_utf8(s: &HSTRING) -> String {
-    s.to_string()
+fn pwstr_to_string(p: PWSTR) -> String {
+    if p.is_null() {
+        return String::new();
+    }
+    unsafe { p.to_string().unwrap_or_default() }
 }
 
 /// Pump Win32 messages until event is signaled or timeout
@@ -87,11 +97,9 @@ pub fn init() -> c_int {
     let env_ref = &env_result;
 
     let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(
-        Box::new(move |result, env| {
-            if result.is_ok() {
-                if let Some(env) = env {
-                    *env_ref.lock().unwrap() = Some(env.clone());
-                }
+        Box::new(move |_result, env| {
+            if let Some(env) = env {
+                *env_ref.lock().unwrap() = Some(env.clone());
             }
             unsafe { let _ = SetEvent(event); }
             Ok(())
@@ -112,7 +120,7 @@ pub fn init() -> c_int {
 
     let env = env_result.lock().unwrap().take();
     if let Some(env) = env {
-        *ENVIRONMENT.lock().unwrap() = Some(env);
+        *ENVIRONMENT.lock().unwrap() = Some(SendCom(env));
         *INSTANCES.lock().unwrap() = Some(HashMap::new());
         *initialized = true;
         0
@@ -138,12 +146,13 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         return ptr::null_mut();
     }
 
-    let env_guard = ENVIRONMENT.lock().unwrap();
-    let Some(env) = env_guard.as_ref() else {
-        return ptr::null_mut();
+    let env = {
+        let guard = ENVIRONMENT.lock().unwrap();
+        match guard.as_ref() {
+            Some(SendCom(env)) => env.clone(),
+            None => return ptr::null_mut(),
+        }
     };
-    let env = env.clone();
-    drop(env_guard);
 
     let parent = HWND(parent_handle as *mut _);
     let event = unsafe { CreateEventW(None, true, false, None).unwrap() };
@@ -152,11 +161,9 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     let ctrl_ref = &controller_result;
 
     let handler = CreateCoreWebView2ControllerCompletedHandler::create(
-        Box::new(move |result, controller| {
-            if result.is_ok() {
-                if let Some(controller) = controller {
-                    *ctrl_ref.lock().unwrap() = Some(controller.clone());
-                }
+        Box::new(move |_result, controller| {
+            if let Some(controller) = controller {
+                *ctrl_ref.lock().unwrap() = Some(controller.clone());
             }
             unsafe { let _ = SetEvent(event); }
             Ok(())
@@ -177,22 +184,31 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         return ptr::null_mut();
     };
 
-    let webview: ICoreWebView2 = unsafe { controller.CoreWebView2().unwrap() };
+    let webview: ICoreWebView2 = unsafe {
+        let mut wv = None;
+        let _ = controller.get_CoreWebView2(&mut wv);
+        match wv {
+            Some(wv) => wv,
+            None => return ptr::null_mut(),
+        }
+    };
 
     // Fill parent window
-    let mut bounds = RECT::default();
-    unsafe { let _ = GetClientRect(parent, &mut bounds); }
-    unsafe { let _ = controller.put_Bounds(bounds); }
+    unsafe {
+        let mut bounds = RECT::default();
+        let _ = GetClientRect(parent, &mut bounds);
+        let _ = controller.put_Bounds(bounds);
+    }
 
     // Set up scheme handler for res://*
     if load_scheme_cb().is_some() {
         unsafe {
             let _ = webview.AddWebResourceRequestedFilter(
-                &utf8_to_wide("res://*"),
+                w!("res://*"),
                 COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
             );
 
-            let env_clone = env.clone();
+            let mut token = 0i64;
             let _ = webview.add_WebResourceRequested(
                 &WebResourceRequestedEventHandler::create(
                     Box::new(move |_sender, args| {
@@ -202,11 +218,14 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                         };
 
                         let request = args.Request()?;
-                        let uri = request.Uri()?;
-                        let uri_utf8 = wide_to_utf8(&uri);
-                        let c_uri = std::ffi::CString::new(uri_utf8).unwrap();
+                        let mut uri = PWSTR::null();
+                        request.get_Uri(&mut uri)?;
+                        let uri_string = pwstr_to_string(uri);
+                        CoTaskMemFree(Some(uri.0 as *const c_void));
 
-                        // Store args for response, prevent release
+                        let c_uri = std::ffi::CString::new(uri_string).unwrap();
+
+                        // Store args for response — prevent release
                         let args_raw = std::mem::ManuallyDrop::new(args.clone());
                         let args_ptr = &*args_raw as *const _ as *mut c_void;
 
@@ -214,15 +233,15 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                         Ok(())
                     }),
                 ),
-                None,
+                &mut token,
             );
         }
     }
 
     // Before-browse handler
     if load_bb_cb().is_some() {
-        let instance_ptr_placeholder = ptr::null_mut::<c_void>();
         unsafe {
+            let mut token = 0i64;
             let _ = webview.add_NavigationStarting(
                 &NavigationStartingEventHandler::create(
                     Box::new(move |_sender, args| {
@@ -231,37 +250,31 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                             return Ok(());
                         };
 
-                        let uri = args.Uri()?;
-                        let uri_utf8 = wide_to_utf8(&uri);
-                        let c_uri = std::ffi::CString::new(uri_utf8).unwrap();
+                        let mut uri = PWSTR::null();
+                        args.get_Uri(&mut uri)?;
+                        let uri_string = pwstr_to_string(uri);
+                        CoTaskMemFree(Some(uri.0 as *const c_void));
 
-                        let is_redirected = args.IsRedirected()?.as_bool() as c_int;
+                        let c_uri = std::ffi::CString::new(uri_string).unwrap();
 
+                        let mut is_redirected = BOOL(0);
+                        let _ = args.get_IsRedirected(&mut is_redirected);
+
+                        // handle is null for now — C# uses handle-based lookup
                         let cancel = callback(
-                            instance_ptr_placeholder,
+                            ptr::null_mut(),
                             c_uri.as_ptr(),
-                            is_redirected,
+                            is_redirected.0 as c_int,
                             user_data,
                         );
                         if cancel != 0 {
-                            args.SetCancel(true)?;
+                            args.put_Cancel(true)?;
                         }
                         Ok(())
                     }),
                 ),
-                None,
+                &mut token,
             );
-        }
-    }
-
-    // Navigate to initial URL
-    if !url.is_null() {
-        unsafe {
-            if let Ok(url_str) = CStr::from_ptr(url).to_str() {
-                if !url_str.is_empty() {
-                    let _ = webview.Navigate(&utf8_to_wide(url_str));
-                }
-            }
         }
     }
 
@@ -275,10 +288,17 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
     let handle = to_handle(instance);
 
-    // Fix up the before-browse handler's instance pointer
-    // (The handler closure captured a null placeholder; for proper per-instance
-    // routing we'd need to update it. For now, the C# side uses handle-based
-    // lookup so this works.)
+    // Navigate to initial URL
+    if !url.is_null() {
+        unsafe {
+            if let Ok(url_str) = CStr::from_ptr(url).to_str() {
+                if !url_str.is_empty() {
+                    let inst = from_handle::<WinWebView>(handle);
+                    let _ = inst.webview.Navigate(&to_hstring(url_str));
+                }
+            }
+        }
+    }
 
     // Track instance
     if let Some(ref mut map) = *INSTANCES.lock().unwrap() {
@@ -305,7 +325,7 @@ pub fn navigate(handle: *mut c_void, url: *const c_char) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         if let Ok(url_str) = CStr::from_ptr(url).to_str() {
-            let _ = instance.webview.Navigate(&utf8_to_wide(url_str));
+            let _ = instance.webview.Navigate(&to_hstring(url_str));
         }
     }
 }
@@ -341,18 +361,22 @@ pub fn go_forward(handle: *mut c_void) {
 pub fn can_go_back(handle: *mut c_void) -> bool {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        instance.webview.CanGoBack().unwrap_or(BOOL(0)).as_bool()
+        let mut result = BOOL(0);
+        let _ = instance.webview.get_CanGoBack(&mut result);
+        result.as_bool()
     }
 }
 
 pub fn can_go_forward(handle: *mut c_void) -> bool {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        instance.webview.CanGoForward().unwrap_or(BOOL(0)).as_bool()
+        let mut result = BOOL(0);
+        let _ = instance.webview.get_CanGoForward(&mut result);
+        result.as_bool()
     }
 }
 
-pub fn is_loading(handle: *mut c_void) -> bool {
+pub fn is_loading(_handle: *mut c_void) -> bool {
     // WebView2 doesn't have a direct IsLoading property
     false
 }
@@ -361,7 +385,7 @@ pub fn execute_js(handle: *mut c_void, code: *const c_char) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         if let Ok(code_str) = CStr::from_ptr(code).to_str() {
-            let _ = instance.webview.ExecuteScript(&utf8_to_wide(code_str), None);
+            let _ = instance.webview.ExecuteScript(&to_hstring(code_str), None);
         }
     }
 }
@@ -369,12 +393,7 @@ pub fn execute_js(handle: *mut c_void, code: *const c_char) {
 pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        let bounds = RECT {
-            left: 0,
-            top: 0,
-            right: width,
-            bottom: height,
-        };
+        let bounds = RECT { left: 0, top: 0, right: width, bottom: height };
         let _ = instance.controller.put_Bounds(bounds);
     }
 }
@@ -382,12 +401,7 @@ pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
 pub fn set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        let bounds = RECT {
-            left: x,
-            top: y,
-            right: x + width,
-            bottom: y + height,
-        };
+        let bounds = RECT { left: x, top: y, right: x + width, bottom: y + height };
         let _ = instance.controller.put_Bounds(bounds);
     }
 }
@@ -396,7 +410,7 @@ pub fn load_html(handle: *mut c_void, html: *const c_char, _base_url: *const c_c
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
         if let Ok(html_str) = CStr::from_ptr(html).to_str() {
-            let _ = instance.webview.NavigateToString(&utf8_to_wide(html_str));
+            let _ = instance.webview.NavigateToString(&to_hstring(html_str));
         }
     }
 }
@@ -416,13 +430,18 @@ pub fn respond_scheme(
 ) {
     unsafe {
         // Reconstruct the args from the ManuallyDrop'd pointer
-        let args: ICoreWebView2WebResourceRequestedEventArgs =
-            std::mem::transmute_copy(&request_handle);
+        let args_ref = &*(request_handle as *const ICoreWebView2WebResourceRequestedEventArgs);
 
-        let env_guard = ENVIRONMENT.lock().unwrap();
-        let Some(env) = env_guard.as_ref() else { return };
+        let env = {
+            let guard = ENVIRONMENT.lock().unwrap();
+            match guard.as_ref() {
+                Some(SendCom(env)) => env.clone(),
+                None => return,
+            }
+        };
 
-        let stream = CreateStreamOnHGlobal(None, true).unwrap();
+        // Create IStream from data
+        let stream: IStream = CreateStreamOnHGlobal(None, true).unwrap();
         if !data.is_null() && length > 0 {
             let slice = std::slice::from_raw_parts(data as *const u8, length as usize);
             let mut written = 0u32;
@@ -431,7 +450,7 @@ pub fn respond_scheme(
                 length as u32,
                 Some(&mut written),
             );
-            // Reset stream position to beginning
+            // Reset stream position
             let _ = stream.Seek(0, STREAM_SEEK_SET, None);
         }
 
@@ -444,19 +463,24 @@ pub fn respond_scheme(
         };
 
         let headers = format!("Content-Type: {}", mime_str);
-        let response = env
-            .CreateWebResourceResponse(
-                &stream,
-                status_code,
-                &utf8_to_wide("OK"),
-                &utf8_to_wide(&headers),
-            )
-            .unwrap();
 
-        let _ = args.put_Response(&response);
+        let mut response = None;
+        let _ = env.CreateWebResourceResponse(
+            &stream,
+            status_code,
+            w!("OK"),
+            &to_hstring(&headers),
+            &mut response,
+        );
 
-        // Drop the ManuallyDrop'd reference
-        std::mem::drop(args);
+        if let Some(response) = response {
+            let _ = args_ref.put_Response(&response);
+        }
+
+        // Drop the ManuallyDrop'd clone
+        std::mem::drop(std::mem::ManuallyDrop::into_inner(
+            std::mem::ManuallyDrop::new(args_ref.clone()),
+        ));
     }
 }
 
@@ -473,14 +497,17 @@ pub fn set_message_handler(
         if let Some(callback) = callback {
             let ud = user_data as usize;
             let handle_val = handle as usize;
+            let mut token = 0i64;
             let _ = instance.webview.add_WebMessageReceived(
                 &WebMessageReceivedEventHandler::create(Box::new(
                     move |_sender, args| {
                         let Some(args) = args else { return Ok(()) };
-                        let message = args.TryGetWebMessageAsString()?;
-                        let msg_utf8 = wide_to_utf8(&message);
-                        let c_msg = std::ffi::CString::new(msg_utf8).unwrap();
+                        let mut message = PWSTR::null();
+                        args.TryGetWebMessageAsString(&mut message)?;
+                        let msg_string = pwstr_to_string(message);
+                        CoTaskMemFree(Some(message.0 as *const c_void));
 
+                        let c_msg = std::ffi::CString::new(msg_string).unwrap();
                         callback(
                             handle_val as *mut c_void,
                             c_msg.as_ptr(),
@@ -489,7 +516,7 @@ pub fn set_message_handler(
                         Ok(())
                     },
                 )),
-                None,
+                &mut token,
             );
         }
     }
