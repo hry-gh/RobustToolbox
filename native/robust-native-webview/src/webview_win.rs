@@ -320,6 +320,13 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
     let handle = to_handle(instance);
 
+    // DEBUG: test with a real URL first to verify webview renders at all
+    unsafe {
+        let inst = from_handle::<WinWebView>(handle);
+        let test_result = inst.webview.NavigateToString(&to_hstring("<html><body><h1>WebView2 is working!</h1></body></html>"));
+        eprintln!("[webview_win] create: NavigateToString test result={:?}", test_result);
+    }
+
     // Navigate to initial URL
     if !url.is_null() {
         unsafe {
