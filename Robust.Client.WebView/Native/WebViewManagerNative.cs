@@ -129,7 +129,7 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
         _browserWindows.Remove(window);
     }
 
-    private nint GetMainWindowHandle()
+    internal nint GetMainWindowHandle()
     {
         var mainWindow = _clyde.MainWindow as IClydeWindowInternal;
         if (mainWindow == null)
@@ -230,8 +230,6 @@ internal sealed partial class WebViewManagerNative : IWebViewManagerImpl
 
     public IWebViewControlImpl MakeControlImpl(WebViewControl owner)
     {
-        // Native webview doesn't support embedded controls in the same way as CEF
-        // Return a dummy implementation or throw
-        throw new NotSupportedException("Native webview does not support embedded UI controls. Use CreateBrowserWindow instead.");
+        return new WebViewControlImplNative(this, owner);
     }
 }
