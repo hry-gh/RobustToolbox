@@ -38,4 +38,12 @@ public static class WCVars
     /// </summary>
     public static readonly CVarDef<int> WebRemoteDebugPort =
         CVarDef.Create("web.remote_debug_port", DefaultRemoteDebugPort, CVar.CLIENTONLY);
+
+    /// <summary>
+    /// Selects the webview backend implementation. Options: "cef" (default), "native", "auto".
+    /// "native" uses OS-provided webviews (WebView2 on Windows, WKWebView on macOS, WebKitGTK on Linux).
+    /// "auto" tries native first, falls back to CEF if unavailable.
+    /// </summary>
+    public static readonly CVarDef<string> WebBackend =
+        CVarDef.Create("web.backend", "cef", CVar.CLIENTONLY);
 }

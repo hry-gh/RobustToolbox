@@ -6,10 +6,17 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib"]
 
+[features]
+default = ["cef"]
+cef = ["dep:cef", "dep:objc2", "dep:objc2-app-kit"]
+
 [dependencies]
-cef = { workspace = true, default-features = false }
-objc2.workspace = true
-objc2-app-kit.workspace = true
+cef = { workspace = true, default-features = false, optional = true }
+objc2 = { workspace = true, optional = true }
+objc2-app-kit = { workspace = true, optional = true }
 
 [build-dependencies]
 cc = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.build-dependencies]
+pkg-config = "0.3"

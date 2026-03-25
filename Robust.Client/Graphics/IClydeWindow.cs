@@ -84,5 +84,7 @@ namespace Robust.Client.Graphics
     internal interface IClydeWindowInternal : IClydeWindow
     {
         nint? WindowsHWnd { get; }
+        nint? CocoaWindow { get; }
+        uint? X11Id { get; }
     }
 }

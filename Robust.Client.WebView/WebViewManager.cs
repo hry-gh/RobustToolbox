@@ -1,10 +1,14 @@
-﻿using System.Diagnostics.CodeAnalysis;
+﻿using System;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.InteropServices;
 using Robust.Client.WebView;
 using Robust.Client.WebView.Cef;
 using Robust.Client.WebView.Headless;
+using Robust.Client.WebView.Native;
 using Robust.Client.WebViewHook;
 using Robust.Shared.Configuration;
 using Robust.Shared.IoC;
+using Robust.Shared.Log;
 using Robust.Shared.Reflection;
 using Robust.Shared.Utility;
 
@@ -30,11 +34,74 @@ namespace Robust.Client.WebView
             dependencies.RegisterInstance<IWebViewManagerInternal>(this);
 
             if (mode == GameController.DisplayMode.Headless || cfg.GetCVar(WCVars.WebHeadless))
+            {
                 _impl = new WebViewManagerHeadless();
+            }
             else
-                _impl = new WebViewManagerCef();
+            {
+                _impl = CreateBackendImpl(cfg, dependencies.Resolve<ILogManager>());
+            }
 
             dependencies.InjectDependencies(_impl, oneOff: true);
+        }
+
+        private static IWebViewManagerImpl CreateBackendImpl(IConfigurationManager cfg, ILogManager logManager)
+        {
+            var backend = cfg.GetCVar(WCVars.WebBackend);
+            var sawmill = logManager.GetSawmill("web");
+
+            switch (backend.ToLowerInvariant())
+            {
+                case "native":
+                    if (TryCreateNativeBackend(out var native))
+                    {
+                        sawmill.Info("Using native webview backend");
+                        return native;
+                    }
+                    sawmill.Warning("Native webview backend unavailable, falling back to CEF");
+                    return new WebViewManagerCef();
+
+                case "auto":
+                    if (TryCreateNativeBackend(out native))
+                    {
+                        sawmill.Info("Using native webview backend (auto-selected)");
+                        return native;
+                    }
+                    sawmill.Info("Using CEF webview backend (auto-selected)");
+                    return new WebViewManagerCef();
+
+                case "cef":
+                default:
+                    sawmill.Info("Using CEF webview backend");
+                    return new WebViewManagerCef();
+            }
+        }
+
+        private static bool TryCreateNativeBackend([NotNullWhen(true)] out IWebViewManagerImpl? impl)
+        {
+            impl = null;
+
+            try
+            {
+                var result = WebViewNative.robust_webview_init();
+                if (result == 0)
+                {
+                    // Shutdown immediately - the real init will happen in Initialize()
+                    WebViewNative.robust_webview_shutdown();
+                    impl = new WebViewManagerNative();
+                    return true;
+                }
+            }
+            catch (DllNotFoundException)
+            {
+                // deliberately empty
+            }
+            catch (EntryPointNotFoundException)
+            {
+                // deliberately empty
+            }
+
+            return false;
         }
 
         public void Initialize()

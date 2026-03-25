@@ -333,6 +333,12 @@ internal partial class Clyde
                         0);
                     reg.X11Id = (uint)SDL.SDL_GetNumberProperty(windowProps, SDL.SDL_PROP_WINDOW_X11_WINDOW_NUMBER, 0);
                     break;
+                case SdlVideoDriver.Cocoa:
+                    reg.CocoaWindow = SDL.SDL_GetPointerProperty(
+                        windowProps,
+                        SDL.SDL_PROP_WINDOW_COCOA_WINDOW_POINTER,
+                        0);
+                    break;
             }
 
             AssignWindowIconToWindow(window);
@@ -588,6 +594,17 @@ internal partial class Clyde
             return reg.WindowsHwnd;
         }
 
+        public nint? WindowGetCocoaWindow(WindowReg window)
+        {
+            CheckWindowDisposed(window);
+
+            if (_videoDriver != SdlVideoDriver.Cocoa)
+                return null;
+
+            var reg = (Sdl3WindowReg)window;
+            return reg.CocoaWindow;
+        }
+
         public void RunOnWindowThread(Action a)
         {
             SendCmd(new CmdRunAction { Action = a });
@@ -698,6 +715,7 @@ internal partial class Clyde
             public nint WindowsHwnd;
             public nint X11Display;
             public uint X11Id;
+            public nint CocoaWindow;
         }
     }
 }

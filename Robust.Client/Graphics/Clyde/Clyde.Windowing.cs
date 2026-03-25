@@ -607,6 +607,8 @@ namespace Robust.Client.Graphics.Clyde
             }
 
             public nint? WindowsHWnd => _clyde._windowing!.WindowGetWin32Window(Reg);
+            public nint? CocoaWindow => _clyde._windowing!.WindowGetCocoaWindow(Reg);
+            public uint? X11Id => _clyde._windowing!.WindowGetX11Id(Reg);
         }
 
         private sealed class MonitorHandle : IClydeMonitor

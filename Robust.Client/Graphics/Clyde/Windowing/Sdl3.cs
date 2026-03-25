@@ -112,6 +112,7 @@ internal partial class Clyde
             {
                 "windows" => SdlVideoDriver.Windows,
                 "x11" => SdlVideoDriver.X11,
+                "cocoa" => SdlVideoDriver.Cocoa,
                 _ => SdlVideoDriver.Other,
             };
         }
@@ -224,7 +225,8 @@ internal partial class Clyde
             // These are the ones we need to be able to check against.
             Other,
             Windows,
-            X11
+            X11,
+            Cocoa
         }
     }
 }
