@@ -421,7 +421,7 @@ pub fn respond_scheme(
             }
         };
 
-        let stream: IStream = CreateStreamOnHGlobal(None, true).unwrap();
+        let stream: IStream = CreateStreamOnHGlobal(HGLOBAL::default(), true).unwrap();
         if !data.is_null() && length > 0 {
             let slice = std::slice::from_raw_parts(data as *const u8, length as usize);
             let mut written = 0u32;
