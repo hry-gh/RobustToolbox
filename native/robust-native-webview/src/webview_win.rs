@@ -1,7 +1,8 @@
 use std::collections::HashMap;
 use std::ffi::{c_char, c_int, c_void, CStr};
 use std::ptr;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use webview2_com::*;
 use webview2_com::Microsoft::Web::WebView2::Win32::*;
@@ -9,18 +10,14 @@ use windows::core::*;
 use windows::Win32::Foundation::*;
 use windows::Win32::System::Com::*;
 use windows::Win32::System::Com::StructuredStorage::CreateStreamOnHGlobal;
-use windows::Win32::System::Threading::*;
 use windows::Win32::UI::WindowsAndMessaging::*;
 
 use crate::platform::*;
 
-// Wrapper to make COM pointers Send for static storage.
-// Only accessed from the main (UI) thread in practice.
 struct SendCom<T>(T);
 unsafe impl<T> Send for SendCom<T> {}
 unsafe impl<T> Sync for SendCom<T> {}
 
-// Global state
 static ENVIRONMENT: Mutex<Option<SendCom<ICoreWebView2Environment>>> = Mutex::new(None);
 static INSTANCES: Mutex<Option<HashMap<usize, ()>>> = Mutex::new(None);
 static SCHEME_CB: Mutex<Option<(SchemeCallbackFn, usize)>> = Mutex::new(None);
@@ -35,7 +32,6 @@ fn load_bb_cb() -> Option<(BeforeBrowseCallbackFn, *mut c_void)> {
     BEFORE_BROWSE_CB.lock().unwrap().map(|(cb, ud)| (cb, ud as *mut c_void))
 }
 
-// Per-webview state
 struct WinWebView {
     controller: ICoreWebView2Controller,
     webview: ICoreWebView2,
@@ -53,31 +49,22 @@ fn to_hstring(s: &str) -> HSTRING {
 }
 
 fn pwstr_to_string(p: PWSTR) -> String {
-    if p.is_null() {
-        return String::new();
-    }
+    if p.is_null() { return String::new(); }
     unsafe { p.to_string().unwrap_or_default() }
 }
 
-/// Pump Win32 messages until event is signaled or timeout
-fn pump_until_event(event: HANDLE, timeout_ms: u32) {
+/// Pump Win32 messages until flag is set or timeout (in ~ms)
+fn pump_until_ready(ready: &AtomicBool, timeout_iters: u32) {
     unsafe {
-        loop {
-            let result = MsgWaitForMultipleObjects(
-                Some(&[event]),
-                false,
-                timeout_ms,
-                QS_ALLINPUT,
-            );
-
-            if result == WAIT_EVENT(0) || result == WAIT_TIMEOUT {
-                break;
-            }
-
+        let mut iters = 0u32;
+        while !ready.load(Ordering::Acquire) && iters < timeout_iters {
             let mut msg = MSG::default();
-            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+            if PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 let _ = TranslateMessage(&msg);
                 DispatchMessageW(&msg);
+            } else {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+                iters += 1;
             }
         }
     }
@@ -93,16 +80,17 @@ pub fn init() -> c_int {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
     }
 
-    let event = unsafe { CreateEventW(None, true, false, None).unwrap() };
-    let env_result: Mutex<Option<ICoreWebView2Environment>> = Mutex::new(None);
-    let env_ref = &env_result;
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready2 = ready.clone();
+    let env_result: Arc<Mutex<Option<ICoreWebView2Environment>>> = Arc::new(Mutex::new(None));
+    let env_ref = env_result.clone();
 
     let handler = CreateCoreWebView2EnvironmentCompletedHandler::create(
         Box::new(move |_result, env| {
             if let Some(env) = env {
                 *env_ref.lock().unwrap() = Some(env.clone());
             }
-            unsafe { let _ = SetEvent(event); }
+            ready2.store(true, Ordering::Release);
             Ok(())
         }),
     );
@@ -112,12 +100,10 @@ pub fn init() -> c_int {
     };
 
     if hr.is_err() {
-        unsafe { let _ = CloseHandle(event); }
         return -1;
     }
 
-    pump_until_event(event, 5000);
-    unsafe { let _ = CloseHandle(event); }
+    pump_until_ready(&ready, 5000);
 
     let env = env_result.lock().unwrap().take();
     if let Some(env) = env {
@@ -154,29 +140,28 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     };
 
     let parent = HWND(parent_handle as *mut _);
-    let event = unsafe { CreateEventW(None, true, false, None).unwrap() };
 
-    let controller_result: Mutex<Option<ICoreWebView2Controller>> = Mutex::new(None);
-    let ctrl_ref = &controller_result;
+    let ready = Arc::new(AtomicBool::new(false));
+    let ready2 = ready.clone();
+    let controller_result: Arc<Mutex<Option<ICoreWebView2Controller>>> = Arc::new(Mutex::new(None));
+    let ctrl_ref = controller_result.clone();
 
     let handler = CreateCoreWebView2ControllerCompletedHandler::create(
         Box::new(move |_result, controller| {
             if let Some(controller) = controller {
                 *ctrl_ref.lock().unwrap() = Some(controller.clone());
             }
-            unsafe { let _ = SetEvent(event); }
+            ready2.store(true, Ordering::Release);
             Ok(())
         }),
     );
 
     let hr = unsafe { env.CreateCoreWebView2Controller(parent, &handler) };
     if hr.is_err() {
-        unsafe { let _ = CloseHandle(event); }
         return ptr::null_mut();
     }
 
-    pump_until_event(event, 5000);
-    unsafe { let _ = CloseHandle(event); }
+    pump_until_ready(&ready, 5000);
 
     let controller = controller_result.lock().unwrap().take();
     let Some(controller) = controller else {
@@ -222,7 +207,6 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
                         let c_uri = std::ffi::CString::new(uri_string).unwrap();
 
-                        // Store args for response — prevent release
                         let args_raw = std::mem::ManuallyDrop::new(args.clone());
                         let args_ptr = &*args_raw as *const _ as *mut c_void;
 
@@ -308,11 +292,9 @@ pub fn destroy(handle: *mut c_void) {
         let instance = from_handle::<WinWebView>(handle);
         let _ = instance.controller.Close();
     }
-
     if let Some(ref mut map) = *INSTANCES.lock().unwrap() {
         map.remove(&(handle as usize));
     }
-
     unsafe { drop_handle::<WinWebView>(handle); }
 }
 
@@ -359,9 +341,7 @@ pub fn can_go_forward(handle: *mut c_void) -> bool {
     }
 }
 
-pub fn is_loading(_handle: *mut c_void) -> bool {
-    false
-}
+pub fn is_loading(_handle: *mut c_void) -> bool { false }
 
 pub fn execute_js(handle: *mut c_void, code: *const c_char) {
     unsafe {
@@ -375,16 +355,14 @@ pub fn execute_js(handle: *mut c_void, code: *const c_char) {
 pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        let bounds = RECT { left: 0, top: 0, right: width, bottom: height };
-        let _ = instance.controller.SetBounds(bounds);
+        let _ = instance.controller.SetBounds(RECT { left: 0, top: 0, right: width, bottom: height });
     }
 }
 
 pub fn set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<WinWebView>(handle);
-        let bounds = RECT { left: x, top: y, right: x + width, bottom: y + height };
-        let _ = instance.controller.SetBounds(bounds);
+        let _ = instance.controller.SetBounds(RECT { left: x, top: y, right: x + width, bottom: y + height });
     }
 }
 
@@ -434,9 +412,7 @@ pub fn respond_scheme(
         }
 
         let mime_str = if !mime_type.is_null() {
-            CStr::from_ptr(mime_type)
-                .to_str()
-                .unwrap_or("application/octet-stream")
+            CStr::from_ptr(mime_type).to_str().unwrap_or("application/octet-stream")
         } else {
             "application/octet-stream"
         };
@@ -444,15 +420,11 @@ pub fn respond_scheme(
         let headers = format!("Content-Type: {}", mime_str);
 
         if let Ok(response) = env.CreateWebResourceResponse(
-            &stream,
-            status_code,
-            w!("OK"),
-            &to_hstring(&headers),
+            &stream, status_code, w!("OK"), &to_hstring(&headers),
         ) {
             let _ = args_ref.SetResponse(&response);
         }
 
-        // Drop the ManuallyDrop'd clone
         std::mem::drop(std::mem::ManuallyDrop::into_inner(
             std::mem::ManuallyDrop::new(args_ref.clone()),
         ));
@@ -483,11 +455,7 @@ pub fn set_message_handler(
                         CoTaskMemFree(Some(message.0 as *const c_void));
 
                         let c_msg = std::ffi::CString::new(msg_string).unwrap();
-                        callback(
-                            handle_val as *mut c_void,
-                            c_msg.as_ptr(),
-                            ud as *mut c_void,
-                        );
+                        callback(handle_val as *mut c_void, c_msg.as_ptr(), ud as *mut c_void);
                         Ok(())
                     },
                 )),
