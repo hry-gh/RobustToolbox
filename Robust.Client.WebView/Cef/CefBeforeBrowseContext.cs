@@ -1,25 +1,19 @@
-﻿using Xilium.CefGlue;
-
 namespace Robust.Client.WebView.Cef
 {
-    internal sealed class CefBeforeBrowseContext : IBeforeBrowseContext
+    /// <summary>
+    /// Before-browse context backed by plain strings from the native FFI layer.
+    /// </summary>
+    internal sealed class NativeBeforeBrowseContext : IBeforeBrowseContext
     {
-        internal readonly CefRequest CefRequest;
-
-        public string Url => CefRequest.Url;
-        public string Method => CefRequest.Method;
-
+        public string Url { get; }
+        public string Method => "GET";
         public bool IsRedirect { get; }
         public bool UserGesture { get; }
-
         public bool IsCancelled { get; private set; }
 
-        internal CefBeforeBrowseContext(
-            bool isRedirect,
-            bool userGesture,
-            CefRequest cefRequest)
+        internal NativeBeforeBrowseContext(string url, bool isRedirect, bool userGesture)
         {
-            CefRequest = cefRequest;
+            Url = url;
             IsRedirect = isRedirect;
             UserGesture = userGesture;
         }

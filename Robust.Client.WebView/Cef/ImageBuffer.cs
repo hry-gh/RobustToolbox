@@ -1,9 +1,8 @@
-﻿using System;
+using System;
 using Robust.Client.Utility;
 using Robust.Shared.Maths;
 using SixLabors.ImageSharp;
 using SixLabors.ImageSharp.PixelFormats;
-using Xilium.CefGlue;
 
 namespace Robust.Client.WebView.Cef
 {
@@ -11,7 +10,7 @@ namespace Robust.Client.WebView.Cef
     {
         public Image<Rgba32> Buffer { get; private set; } = new(1, 1);
 
-        public unsafe void UpdateBuffer(int width, int height, IntPtr buffer, CefRectangle dirtyRect)
+        public unsafe void UpdateBuffer(int width, int height, IntPtr buffer, int dirtyX, int dirtyY, int dirtyW, int dirtyH)
         {
             if (width != Buffer.Width || height != Buffer.Height)
                 UpdateSize(width, height);
@@ -23,9 +22,9 @@ namespace Robust.Client.WebView.Cef
             ImageSharpExt.Blit(
                 span,
                 width,
-                UIBox2i.FromDimensions(dirtyRect.X, dirtyRect.Y, dirtyRect.Width, dirtyRect.Height),
+                UIBox2i.FromDimensions(dirtyX, dirtyY, dirtyW, dirtyH),
                 Buffer,
-                (dirtyRect.X, dirtyRect.Y));
+                (dirtyX, dirtyY));
         }
 
         private void UpdateSize(int width, int height)

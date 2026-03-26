@@ -1,54 +1,22 @@
 using System;
 using System.Diagnostics;
 using System.Globalization;
-using System.Runtime.InteropServices;
 using System.Threading;
-using Robust.Shared.ContentPack;
-using Xilium.CefGlue;
 
 namespace Robust.Client.WebView.Cef
 {
     internal static class Program
     {
-        // This was supposed to be the main entry for the subprocess program... It doesn't work.
+        // The subprocess entry point is now handled by the Rust cef-helper binary.
+        // This C# entry point is kept for compatibility but should not be used for CEF subprocesses.
         public static int Main(string[] args)
         {
-            // This is a workaround for this to work on UNIX.
-            var argv = args;
-            if (CefRuntime.Platform != CefRuntimePlatform.Windows)
-            {
-                argv = new string[args.Length + 1];
-                Array.Copy(args, 0, argv, 1, args.Length);
-                argv[0] = "-";
-            }
-
-#if MACOS
-            NativeLibrary.SetDllImportResolver(typeof(CefSettings).Assembly,
-                (name, assembly, path) =>
-                {
-                    if (name == "libcef")
-                    {
-                        var libPath = PathHelpers.ExecutableRelativeFile("../../../../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
-                        return NativeLibrary.Load(libPath, assembly, path);
-                    }
-
-                    return 0;
-                });
-#endif
-
-            var mainArgs = new CefMainArgs(argv);
-
             StartWatchThread();
 
-            // This will block executing until the subprocess is shut down.
-            var code = CefRuntime.ExecuteProcess(mainArgs, new RobustCefApp(null), IntPtr.Zero);
-
-            if (code != 0)
-            {
-                System.Console.WriteLine($"CEF Subprocess exited unsuccessfully with exit code {code}! Arguments: {string.Join(' ', argv)}");
-            }
-
-            return code;
+            // The actual subprocess is the Rust cef-helper. This C# program should not be invoked
+            // as a CEF subprocess anymore. If it is, just exit.
+            System.Console.Error.WriteLine("CEF subprocess should use the Rust cef-helper binary, not this C# program.");
+            return 1;
         }
 
         private static void StartWatchThread()

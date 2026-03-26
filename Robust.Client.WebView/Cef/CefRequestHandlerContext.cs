@@ -1,42 +1,51 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net;
-using Xilium.CefGlue;
 
 namespace Robust.Client.WebView.Cef
 {
-    internal sealed class CefRequestHandlerContext : IRequestHandlerContext
+    /// <summary>
+    /// Holds response data to be sent back through the native FFI.
+    /// </summary>
+    internal sealed class NativeResponseData
     {
-        internal readonly CefRequest CefRequest;
+        public int StatusCode { get; }
+        public string MimeType { get; }
+        public byte[] Data { get; }
 
-        public bool IsNavigation { get; }
-        public bool IsDownload { get; }
-        public string RequestInitiator { get; }
+        public NativeResponseData(int statusCode, string mimeType, byte[] data)
+        {
+            StatusCode = statusCode;
+            MimeType = mimeType;
+            Data = data;
+        }
+    }
 
-        public string Url => CefRequest.Url;
-        public string Method => CefRequest.Method;
-
+    /// <summary>
+    /// Request handler context backed by plain strings from the native FFI layer.
+    /// </summary>
+    internal sealed class NativeRequestHandlerContext : IRequestHandlerContext
+    {
+        public bool IsNavigation => false;
+        public bool IsDownload => false;
+        public string RequestInitiator => "";
+        public string Url { get; }
+        public string Method { get; }
         public bool IsHandled { get; private set; }
-
         public bool IsCancelled { get; private set; }
 
-        internal IRequestResult? Result { get; private set; }
+        internal NativeResponseData? ResponseData { get; private set; }
 
-        internal CefRequestHandlerContext(
-            bool isNavigation,
-            bool isDownload,
-            string requestInitiator,
-            CefRequest cefRequest)
+        internal NativeRequestHandlerContext(string url, string method)
         {
-            CefRequest = cefRequest;
-            IsNavigation = isNavigation;
-            IsDownload = isDownload;
-            RequestInitiator = requestInitiator;
+            Url = url;
+            Method = method;
         }
 
         public void DoCancel()
         {
-            CheckNotHandled();
+            if (IsHandled)
+                throw new InvalidOperationException("Request has already been handled");
 
             IsHandled = true;
             IsCancelled = true;
@@ -44,13 +53,12 @@ namespace Robust.Client.WebView.Cef
 
         public void DoRespondStream(Stream stream, string contentType, HttpStatusCode code = HttpStatusCode.OK)
         {
-            Result = new RequestResultStream(stream, contentType, code);
-        }
+            using var ms = new MemoryStream();
+            stream.CopyTo(ms);
+            var data = ms.ToArray();
 
-        private void CheckNotHandled()
-        {
-            if (IsHandled)
-                throw new InvalidOperationException("Request has already been handled");
+            ResponseData = new NativeResponseData((int)code, contentType, data);
+            IsHandled = true;
         }
     }
 }

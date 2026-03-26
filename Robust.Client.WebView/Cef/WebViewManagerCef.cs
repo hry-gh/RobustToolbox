@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -14,15 +13,12 @@ using Robust.Shared.Localization;
 using Robust.Shared.Log;
 using Robust.Shared.Prototypes;
 using Robust.Shared.Utility;
-using Xilium.CefGlue;
 
 namespace Robust.Client.WebView.Cef
 {
     internal sealed partial class WebViewManagerCef : IWebViewManagerImpl
     {
         private static readonly string BasePath = Path.GetDirectoryName(Assembly.GetExecutingAssembly().Location!)!;
-
-        private CefApp _app = default!;
 
         [Dependency] private readonly IDependencyCollection _dependencyCollection = default!;
         [Dependency] private readonly IPrototypeManager _prototypeManager = default!;
@@ -35,7 +31,10 @@ namespace Robust.Client.WebView.Cef
 
         private ISawmill _sawmill = default!;
 
-        public void Initialize()
+        // Pinned callback for res:// scheme handler.
+        private GCHandle _resSchemeCallbackHandle;
+
+        public unsafe void Initialize()
         {
             _sawmill = _logManager.GetSawmill("web.cef");
 
@@ -43,7 +42,7 @@ namespace Robust.Client.WebView.Cef
                 "flushcookies",
                 _localization.GetString("cmd-flushcookies-desc"),
                 _localization.GetString("cmd-flushcookies-help"),
-                (_, _, _) => CefCookieManager.GetGlobal(null).FlushStore(null));
+                (_, _, _) => NativeWebView.rnw_flush_cookies());
 
 #if !MACOS
             string subProcessName;
@@ -58,75 +57,127 @@ namespace Robust.Client.WebView.Cef
             var cefResourcesPath = LocateCefResources();
             _sawmill.Debug($"Subprocess path: {subProcessPath}, resources: {cefResourcesPath}");
 
-            // System.Console.WriteLine(AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES"));
-
             if (cefResourcesPath == null)
                 throw new InvalidOperationException("Unable to locate cef_resources directory!");
 #endif
 
             var remoteDebugPort = _cfg.GetCVar(WCVars.WebRemoteDebugPort);
-
             var cachePath = FindAndLockCacheDirectory();
+            var userAgentOverride = _cfg.GetCVar(WCVars.WebUserAgentOverride);
 
-#if MACOS
-            NativeLibrary.SetDllImportResolver(typeof(CefSettings).Assembly,
-                (name, assembly, path) =>
-                {
-                    if (name == "libcef")
-                    {
-                        var libPath = PathHelpers.ExecutableRelativeFile("../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
-                        return NativeLibrary.Load(libPath, assembly, path);
-                    }
-
-                    return 0;
-                });
-
-            // Needed to implement CefAppProtocol on our NSApplication.
-            NativeLibrary.Load("robust_native_webview", typeof(WebViewManagerCef).Assembly, null);
-#endif
-
-            var settings = new CefSettings()
+            // Build settings and marshal strings to UTF-8
+            var settings = new RnwSettings
             {
-                WindowlessRenderingEnabled = true, // So we can render to our UI controls.
-                ExternalMessagePump = true,
-                NoSandbox = true, // Not disabling the sandbox crashes CEF.
-#if !MACOS
-                BrowserSubprocessPath = subProcessPath,
-                LocalesDirPath = Path.Combine(cefResourcesPath, "locales"),
-                ResourcesDirPath = cefResourcesPath,
-#endif
+                NoSandbox = 1,
                 RemoteDebuggingPort = remoteDebugPort,
-                CookieableSchemesList = "usr,res",
-                CachePath = cachePath,
             };
 
-            var userAgentOverride = _cfg.GetCVar(WCVars.WebUserAgentOverride);
+#if !MACOS
+            var subprocessPathUtf8 = MarshalStringToUtf8(subProcessPath);
+            var localesDirUtf8 = MarshalStringToUtf8(Path.Combine(cefResourcesPath, "locales"));
+            var resourcesDirUtf8 = MarshalStringToUtf8(cefResourcesPath);
+
+            settings.SubprocessPath = (byte*)subprocessPathUtf8;
+            settings.ResourcesDirPath = (byte*)resourcesDirUtf8;
+            settings.LocalesDirPath = (byte*)localesDirUtf8;
+#endif
+
+            var cachePathUtf8 = MarshalStringToUtf8(cachePath);
+            settings.CachePath = (byte*)cachePathUtf8;
+
+            var cookieSchemesUtf8 = MarshalStringToUtf8("usr,res");
+            settings.CookieableSchemes = (byte*)cookieSchemesUtf8;
+
+            IntPtr userAgentUtf8 = IntPtr.Zero;
             if (!string.IsNullOrEmpty(userAgentOverride))
             {
-                settings.UserAgent = userAgentOverride;
+                userAgentUtf8 = MarshalStringToUtf8(userAgentOverride);
+                settings.UserAgent = (byte*)userAgentUtf8;
             }
 
-            _sawmill.Info($"CEF Version: {CefRuntime.ChromeVersion}");
+            var result = NativeWebView.rnw_initialize(&settings);
+            _sawmill.Info($"CEF initialized via cef-rs, result: {result}");
 
-            _app = new RobustCefApp(_sawmill);
+            // Free marshalled strings
+#if !MACOS
+            Marshal.FreeHGlobal(subprocessPathUtf8);
+            Marshal.FreeHGlobal(resourcesDirUtf8);
+            Marshal.FreeHGlobal(localesDirUtf8);
+#endif
+            Marshal.FreeHGlobal(cachePathUtf8);
+            Marshal.FreeHGlobal(cookieSchemesUtf8);
+            if (userAgentUtf8 != IntPtr.Zero)
+                Marshal.FreeHGlobal(userAgentUtf8);
 
-            var process = Process.GetCurrentProcess();
-            Environment.SetEnvironmentVariable("ROBUST_CEF_BROWSER_PROCESS_ID", process.Id.ToString());
-            Environment.SetEnvironmentVariable("ROBUST_CEF_BROWSER_PROCESS_MODULE", process.MainModule?.FileName ?? "");
-
-            // So these arguments look like nonsense, but it turns out CEF is just *like that*.
-            // The first argument is literally nonsense, but it needs to be there as otherwise the second argument doesn't apply
-            // The second argument turns off CEF's bullshit error handling, which breaks dotnet's error handling.
-            CefRuntime.Initialize(new CefMainArgs(new string[]{"binary","--disable-in-process-stack-traces"}), settings, _app, IntPtr.Zero);
-
+            // Register res:// scheme handler if enabled.
             if (_cfg.GetCVar(WCVars.WebResProtocol))
             {
-                var handler = new ResourceSchemeFactoryHandler(
-                    this,
-                    _resourceManager,
-                    _logManager.GetSawmill("web.res"));
+                RegisterResSchemeHandler();
+            }
+        }
 
-                CefRuntime.RegisterSchemeHandlerFactory("res", "", handler);
+        private unsafe void RegisterResSchemeHandler()
+        {
+            // We need a static callback that can be called from Rust.
+            // Use a function pointer to an unmanaged callback.
+            NativeWebView.rnw_register_res_scheme_handler(
+                &ResSchemeCallback,
+                null);
+        }
+
+        [UnmanagedCallersOnly]
+        private static unsafe int ResSchemeCallback(void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
+        {
+            // This is called from the Rust scheme handler.
+            // We need to resolve the resource and set the response.
+            try
+            {
+                var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
+                var uri = new Uri(url);
+                var resPath = new ResPath(uri.AbsolutePath);
+
+                // Access the singleton instance. This is safe because this callback is only registered
+                // when the manager is initialized, and the manager outlives CEF.
+                var instance = IoCManager.Resolve<IWebViewManagerImpl>() as WebViewManagerCef;
+                if (instance == null)
+                    return 0;
+
+                if (instance._resourceManager.TryContentFileRead(resPath, out var stream))
+                {
+                    if (!instance.TryGetResourceMimeType(resPath.Extension, out var mime))
+                        mime = "application/octet-stream";
+
+                    using (stream)
+                    {
+                        using var ms = new MemoryStream();
+                        stream.CopyTo(ms);
+                        var data = ms.ToArray();
+
+                        fixed (byte* dataPtr = data)
+                        {
+                            var mimeUtf8 = MarshalStringToUtf8(mime);
+                            NativeWebView.rnw_request_set_response(requestId, 200, (byte*)mimeUtf8, dataPtr, data.Length);
+                            Marshal.FreeHGlobal(mimeUtf8);
+                        }
+                    }
+
+                    return 1;
+                }
+
+                // Not found
+                var notFoundBytes = Encoding.UTF8.GetBytes("Not found");
+                fixed (byte* notFoundPtr = notFoundBytes)
+                {
+                    var mimeUtf8 = MarshalStringToUtf8("text/plain");
+                    NativeWebView.rnw_request_set_response(requestId, 404, (byte*)mimeUtf8, notFoundPtr, notFoundBytes.Length);
+                    Marshal.FreeHGlobal(mimeUtf8);
+                }
+
+                return 1;
+            }
+            catch
+            {
+                return 0;
             }
         }
 
@@ -162,8 +213,7 @@ namespace Robust.Client.WebView.Cef
 
         public void Update()
         {
-            // Calling this makes CEF do its work, without using its own update loop.
-            CefRuntime.DoMessageLoopWork();
+            NativeWebView.rnw_do_message_loop_work();
         }
 
         public void Shutdown()
@@ -178,50 +228,20 @@ namespace Robust.Client.WebView.Cef
                 window.Dispose();
             }
 
-            CefRuntime.Shutdown();
+            NativeWebView.rnw_shutdown();
         }
 
-        private sealed class ResourceSchemeFactoryHandler : CefSchemeHandlerFactory
+        /// <summary>
+        /// Marshal a .NET string to a null-terminated UTF-8 byte buffer allocated with Marshal.AllocHGlobal.
+        /// Caller must free with Marshal.FreeHGlobal.
+        /// </summary>
+        internal static IntPtr MarshalStringToUtf8(string s)
         {
-            private readonly WebViewManagerCef _parent;
-            private readonly IResourceManager _resourceManager;
-            private readonly ISawmill _sawmill;
-
-            public ResourceSchemeFactoryHandler(
-                WebViewManagerCef parent,
-                IResourceManager resourceManager,
-                ISawmill sawmill)
-            {
-                _parent = parent;
-                _resourceManager = resourceManager;
-                _sawmill = sawmill;
-            }
-
-            protected override CefResourceHandler Create(
-                CefBrowser browser,
-                CefFrame frame,
-                string schemeName,
-                CefRequest request)
-            {
-                var uri = new Uri(request.Url);
-
-                _sawmill.Debug($"HANDLING: {request.Url}");
-
-                var resPath = new ResPath(uri.AbsolutePath);
-                if (_resourceManager.TryContentFileRead(resPath, out var stream))
-                {
-                    if (!_parent.TryGetResourceMimeType(resPath.Extension, out var mime))
-                        mime = "application/octet-stream";
-
-                    return new RequestResultStream(stream, mime, HttpStatusCode.OK).MakeHandler();
-                }
-
-                var notFoundStream = new MemoryStream();
-                notFoundStream.Write(Encoding.UTF8.GetBytes("Not found"));
-                notFoundStream.Position = 0;
-
-                return new RequestResultStream(notFoundStream, "text/plain", HttpStatusCode.NotFound).MakeHandler();
-            }
+            var bytes = Encoding.UTF8.GetBytes(s);
+            var ptr = Marshal.AllocHGlobal(bytes.Length + 1);
+            Marshal.Copy(bytes, 0, ptr, bytes.Length);
+            Marshal.WriteByte(ptr, bytes.Length, 0); // null terminator
+            return ptr;
         }
     }
 }

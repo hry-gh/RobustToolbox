@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Numerics;
+using System.Runtime.InteropServices;
+using System.Text;
 using Robust.Client.Graphics;
 using Robust.Client.Input;
 using Robust.Client.UserInterface;
@@ -9,7 +11,6 @@ using Robust.Shared.Log;
 using Robust.Shared.Maths;
 using Robust.Shared.Utility;
 using SixLabors.ImageSharp.PixelFormats;
-using Xilium.CefGlue;
 using static Robust.Client.WebView.Cef.CefKeyCodes.ChromiumKeyboardCode;
 using static Robust.Client.Input.Keyboard;
 
@@ -23,7 +24,7 @@ namespace Robust.Client.WebView.Cef
         {
             var shader = _prototypeManager.Index<ShaderPrototype>("bgra");
             var shaderInstance = shader.Instance();
-            var impl =  new ControlImpl(this, owner, shaderInstance);
+            var impl = new ControlImpl(this, owner, shaderInstance);
             _dependencyCollection.InjectDependencies(impl);
             return impl;
         }
@@ -132,12 +133,25 @@ namespace Robust.Client.WebView.Cef
                 [Key.Pause] = VKEY_PAUSE,
             };
 
+            // CefEventFlags constants matching CEF's cef_event_flags_t
+            private const uint EVENTFLAG_NONE = 0;
+            private const uint EVENTFLAG_CONTROL_DOWN = 1 << 3;
+            private const uint EVENTFLAG_ALT_DOWN = 1 << 5;
+            private const uint EVENTFLAG_SHIFT_DOWN = 1 << 1;
+            private const uint EVENTFLAG_LEFT_MOUSE_BUTTON = 1 << 6;
+            private const uint EVENTFLAG_MIDDLE_MOUSE_BUTTON = 1 << 7;
+            private const uint EVENTFLAG_RIGHT_MOUSE_BUTTON = 1 << 8;
+
             [Dependency] private readonly IClyde _clyde = default!;
             [Dependency] private readonly IInputManager _inputMgr = default!;
 
             private readonly WebViewManagerCef _manager;
             public readonly WebViewControl Owner;
             private readonly ShaderInstance _shaderInstance;
+
+            // Handler dispatch lists (no longer using CefGlue types).
+            private readonly List<Action<IRequestHandlerContext>> _resourceRequestHandlers = new();
+            private readonly List<Action<IBeforeBrowseContext>> _beforeBrowseHandlers = new();
 
             public ControlImpl(WebViewManagerCef manager, WebViewControl owner, ShaderInstance shaderInstance)
             {
@@ -150,148 +164,154 @@ namespace Robust.Client.WebView.Cef
 
             private bool _textInputActive;
 
-            private readonly RobustRequestHandler _requestHandler = new(Logger.GetSawmill("root"));
+            private ulong _browserHandle;
+            private GCHandle _callbackGcHandle;
             private LiveData? _data;
             private string _startUrl = "about:blank";
 
-            public string Url
+            public unsafe string Url
             {
-                get => _data == null ? _startUrl : _data.Browser.GetMainFrame().Url;
+                get
+                {
+                    if (_browserHandle == 0)
+                        return _startUrl;
+
+                    var buf = stackalloc byte[4096];
+                    var len = NativeWebView.rnw_browser_get_url(_browserHandle, buf, 4096);
+                    if (len < 0)
+                        return _startUrl;
+
+                    return Encoding.UTF8.GetString(buf, Math.Min(len, 4095));
+                }
                 set
                 {
-                    if (_data == null)
+                    if (_browserHandle == 0)
+                    {
                         _startUrl = value;
-                    else
-                        _data.Browser.GetMainFrame().LoadUrl(value);
+                        return;
+                    }
+
+                    var utf8 = MarshalStringToUtf8(value);
+                    NativeWebView.rnw_browser_load_url(_browserHandle, (byte*)utf8);
+                    Marshal.FreeHGlobal(utf8);
                 }
             }
 
-            public bool IsOpen => _data != null;
-            public bool IsLoading => _data?.Browser.IsLoading ?? false;
+            public bool IsOpen => _browserHandle != 0;
+            public bool IsLoading => _browserHandle != 0 && NativeWebView.rnw_browser_is_loading(_browserHandle) != 0;
 
-            public void StartBrowser()
+            public unsafe void StartBrowser()
             {
-                DebugTools.AssertNull(_data);
+                DebugTools.Assert(_browserHandle == 0);
 
-                // A funny render handler that will allow us to render to the control.
-                var renderer = new ControlRenderHandler(this);
+                // Pin ourselves so the GC doesn't move us while callbacks are active.
+                _callbackGcHandle = GCHandle.Alloc(this);
 
-                // A funny web cef client. This can actually be shared by multiple browsers, but I'm not sure how the
-                // rendering would work in that case? TODO CEF: Investigate a way to share the web client?
-                var client = new RobustCefClient(renderer, _requestHandler, new RobustLoadHandler());
-
-                var info = CefWindowInfo.Create();
-
-                // FUNFACT: If you DO NOT set these below and set info.Width/info.Height instead, you get an external window
-                // Good to know, huh? Setup is the same, except you can pass a dummy render handler to the CEF client.
-                info.SetAsWindowless(IntPtr.Zero, false); // TODO CEF: Pass parent handle?
-                info.WindowlessRenderingEnabled = true;
-
-                var settings = new CefBrowserSettings()
+                var callbacks = new RnwBrowserCallbacks
                 {
-                    WindowlessFrameRate = 60
+                    UserData = (void*)GCHandle.ToIntPtr(_callbackGcHandle),
+                    OnPaint = &OnPaintCallback,
+                    GetViewRect = &GetViewRectCallback,
+                    GetScreenInfo = &GetScreenInfoCallback,
+                    OnVirtualKeyboardRequested = &OnVirtualKeyboardRequestedCallback,
+                    OnBeforeBrowse = &OnBeforeBrowseCallback,
+                    OnResourceRequest = &OnResourceRequestCallback,
+                    OnLoadStart = &OnLoadStartCallback,
+                    OnLoadEnd = &OnLoadEndCallback,
+                    OnBeforeClose = null,
                 };
 
-                // Create the web browser! And by default, we go to about:blank.
-                var browser = CefBrowserHost.CreateBrowserSync(info, client, settings, _startUrl);
+                var urlUtf8 = MarshalStringToUtf8(_startUrl);
+                _browserHandle = NativeWebView.rnw_browser_create(
+                    (byte*)urlUtf8,
+                    Math.Max(Owner.PixelWidth, 1),
+                    Math.Max(Owner.PixelHeight, 1),
+                    &callbacks);
+                Marshal.FreeHGlobal(urlUtf8);
 
                 var texture = _clyde.CreateBlankTexture<Rgba32>(Vector2i.One);
+                _data = new LiveData(texture);
 
-                _data = new LiveData(texture, client, browser, renderer);
                 _manager._activeControls.Add(this);
             }
 
             public void CloseBrowser()
             {
-                DebugTools.AssertNotNull(_data);
+                DebugTools.Assert(_browserHandle != 0);
 
                 _data!.Texture.Dispose();
-                _data.Browser.GetHost().CloseBrowser(true);
+                NativeWebView.rnw_browser_close(_browserHandle);
+                _browserHandle = 0;
                 _data = null;
+
+                if (_callbackGcHandle.IsAllocated)
+                    _callbackGcHandle.Free();
 
                 _manager._activeControls.Remove(this);
             }
 
             public void MouseMove(GUIMouseMoveEventArgs args)
             {
-                if (_data == null)
-                    return;
-
-                // Logger.Debug();
+                if (_browserHandle == 0) return;
                 var modifiers = CalcMouseModifiers();
-                var mouseEvent = new CefMouseEvent(
+                NativeWebView.rnw_browser_send_mouse_move(
+                    _browserHandle,
                     (int)args.RelativePosition.X, (int)args.RelativePosition.Y,
-                    modifiers);
-
-                _data.Browser.GetHost().SendMouseMoveEvent(mouseEvent, false);
+                    modifiers, 0);
             }
 
             public void MouseExited()
             {
-                if (_data == null)
-                    return;
-
+                if (_browserHandle == 0) return;
                 var modifiers = CalcMouseModifiers();
-
-                _data.Browser.GetHost().SendMouseMoveEvent(new CefMouseEvent(0, 0, modifiers), true);
+                NativeWebView.rnw_browser_send_mouse_move(_browserHandle, 0, 0, modifiers, 1);
             }
 
             public void MouseWheel(GUIMouseWheelEventArgs args)
             {
-                if (_data == null)
-                    return;
-
+                if (_browserHandle == 0) return;
                 var modifiers = CalcMouseModifiers();
-                var mouseEvent = new CefMouseEvent(
+                NativeWebView.rnw_browser_send_mouse_wheel(
+                    _browserHandle,
                     (int)args.RelativePosition.X, (int)args.RelativePosition.Y,
-                    modifiers);
-
-                _data.Browser.GetHost().SendMouseWheelEvent(
-                    mouseEvent,
+                    modifiers,
                     (int)args.Delta.X * ScrollSpeed,
                     (int)args.Delta.Y * ScrollSpeed);
             }
 
-            public bool RawKeyEvent(in GuiRawKeyEvent guiRawEvent)
+            public unsafe bool RawKeyEvent(in GuiRawKeyEvent guiRawEvent)
             {
-                if (_data == null)
+                if (_browserHandle == 0)
                     return false;
-
-                var host = _data.Browser.GetHost();
 
                 if (guiRawEvent.Key is Key.MouseLeft or Key.MouseMiddle or Key.MouseRight)
                 {
-                    var key = guiRawEvent.Key switch
+                    var button = guiRawEvent.Key switch
                     {
-                        Key.MouseLeft => CefMouseButtonType.Left,
-                        Key.MouseMiddle => CefMouseButtonType.Middle,
-                        Key.MouseRight => CefMouseButtonType.Right,
-                        _ => default // not possible
+                        Key.MouseLeft => 0,   // MBT_LEFT
+                        Key.MouseMiddle => 1,  // MBT_MIDDLE
+                        Key.MouseRight => 2,   // MBT_RIGHT
+                        _ => 0
                     };
 
-                    var mouseEvent = new CefMouseEvent(
+                    NativeWebView.rnw_browser_send_mouse_click(
+                        _browserHandle,
                         guiRawEvent.MouseRelative.X, guiRawEvent.MouseRelative.Y,
-                        CefEventFlags.None);
-
-                    // Logger.Debug($"MOUSE: {guiRawEvent.Action} {guiRawEvent.Key} {guiRawEvent.ScanCode} {key}");
-
-                    // TODO: double click support?
-                    host.SendMouseClickEvent(mouseEvent, key, guiRawEvent.Action == RawKeyAction.Up, 1);
+                        EVENTFLAG_NONE,
+                        button,
+                        guiRawEvent.Action == RawKeyAction.Up ? 1 : 0,
+                        1);
                 }
                 else
                 {
-                    // TODO: Handle left/right modifier keys??
                     if (!KeyMap.TryGetValue(guiRawEvent.Key, out var vkKey))
                         vkKey = default;
-
-                    // Logger.Debug($"{guiRawEvent.Action} {guiRawEvent.Key} {guiRawEvent.ScanCode} {vkKey}");
 
 #if !MACOS
                     var lParam = 0;
                     lParam |= (guiRawEvent.ScanCode & 0xFF) << 16;
                     if (guiRawEvent.Action != RawKeyAction.Down)
                         lParam |= 1 << 30;
-
                     if (guiRawEvent.Action == RawKeyAction.Up)
                         lParam |= 1 << 31;
 #else
@@ -299,124 +319,101 @@ namespace Robust.Client.WebView.Cef
 #endif
                     var modifiers = CalcModifiers(guiRawEvent.Key);
 
-                    host.SendKeyEvent(new CefKeyEvent
+                    var keyEvent = new RnwKeyEvent
                     {
-                        // Repeats are sent as key downs, I guess?
-                        EventType = guiRawEvent.Action == RawKeyAction.Up
-                            ? CefKeyEventType.KeyUp
-                            : CefKeyEventType.RawKeyDown,
+                        EventType = guiRawEvent.Action == RawKeyAction.Up ? 1 : 0, // 0=RawKeyDown, 1=KeyUp
                         NativeKeyCode = lParam,
-                        // NativeKeyCode = guiRawEvent.ScanCode,
                         WindowsKeyCode = (int)vkKey,
-                        IsSystemKey = false, // TODO
-                        Modifiers = modifiers
-                    });
+                        IsSystemKey = 0,
+                        Modifiers = modifiers,
+                    };
+
+                    NativeWebView.rnw_browser_send_key_event(_browserHandle, &keyEvent);
 
                     if (guiRawEvent.Action != RawKeyAction.Up && guiRawEvent.Key == Key.Return)
                     {
-                        host.SendKeyEvent(new CefKeyEvent
+                        var charEvent = new RnwKeyEvent
                         {
-                            EventType = CefKeyEventType.Char,
+                            EventType = 2, // Char
                             WindowsKeyCode = '\b',
                             NativeKeyCode = lParam,
-                            Modifiers = modifiers
-                        });
+                            Modifiers = modifiers,
+                        };
+
+                        NativeWebView.rnw_browser_send_key_event(_browserHandle, &charEvent);
                     }
                 }
 
                 return true;
             }
 
-            private CefEventFlags CalcModifiers(Key key)
+            private uint CalcModifiers(Key key)
             {
-                CefEventFlags modifiers = default;
-
+                uint modifiers = EVENTFLAG_NONE;
                 if (_inputMgr.IsKeyDown(Key.Control))
-                    modifiers |= CefEventFlags.ControlDown;
-
+                    modifiers |= EVENTFLAG_CONTROL_DOWN;
                 if (_inputMgr.IsKeyDown(Key.Alt))
-                    modifiers |= CefEventFlags.AltDown;
-
+                    modifiers |= EVENTFLAG_ALT_DOWN;
                 if (_inputMgr.IsKeyDown(Key.Shift))
-                    modifiers |= CefEventFlags.ShiftDown;
-
-                if (_inputMgr.IsKeyDown(Key.Shift))
-                    modifiers |= CefEventFlags.ShiftDown;
-
+                    modifiers |= EVENTFLAG_SHIFT_DOWN;
                 return modifiers;
             }
 
-            private CefEventFlags CalcMouseModifiers()
+            private uint CalcMouseModifiers()
             {
-                CefEventFlags modifiers = default;
-
+                uint modifiers = EVENTFLAG_NONE;
                 if (_inputMgr.IsKeyDown(Key.Control))
-                    modifiers |= CefEventFlags.ControlDown;
-
+                    modifiers |= EVENTFLAG_CONTROL_DOWN;
                 if (_inputMgr.IsKeyDown(Key.Alt))
-                    modifiers |= CefEventFlags.AltDown;
-
+                    modifiers |= EVENTFLAG_ALT_DOWN;
                 if (_inputMgr.IsKeyDown(Key.Shift))
-                    modifiers |= CefEventFlags.ShiftDown;
-
-                if (_inputMgr.IsKeyDown(Key.Shift))
-                    modifiers |= CefEventFlags.ShiftDown;
-
+                    modifiers |= EVENTFLAG_SHIFT_DOWN;
                 if (_inputMgr.IsKeyDown(Key.MouseLeft))
-                    modifiers |= CefEventFlags.LeftMouseButton;
-
+                    modifiers |= EVENTFLAG_LEFT_MOUSE_BUTTON;
                 if (_inputMgr.IsKeyDown(Key.MouseMiddle))
-                    modifiers |= CefEventFlags.MiddleMouseButton;
-
+                    modifiers |= EVENTFLAG_MIDDLE_MOUSE_BUTTON;
                 if (_inputMgr.IsKeyDown(Key.MouseRight))
-                    modifiers |= CefEventFlags.RightMouseButton;
-
+                    modifiers |= EVENTFLAG_RIGHT_MOUSE_BUTTON;
                 return modifiers;
             }
 
-            public void TextEntered(GUITextEnteredEventArgs args)
+            public unsafe void TextEntered(GUITextEnteredEventArgs args)
             {
-                if (_data == null)
-                    return;
-
-                var host = _data.Browser.GetHost();
+                if (_browserHandle == 0) return;
 
                 foreach (var chr in args.Text)
                 {
-                    host.SendKeyEvent(new CefKeyEvent
+                    var charEvent = new RnwKeyEvent
                     {
-                        EventType = CefKeyEventType.Char,
+                        EventType = 2, // Char
                         WindowsKeyCode = chr,
                         Character = chr,
-                        UnmodifiedCharacter = chr
-                    });
+                        UnmodifiedCharacter = chr,
+                    };
+
+                    NativeWebView.rnw_browser_send_key_event(_browserHandle, &charEvent);
                 }
             }
 
             public void Resized()
             {
-                if (_data == null)
-                    return;
+                if (_browserHandle == 0) return;
 
-                _data.Browser.GetHost().NotifyMoveOrResizeStarted();
-                _data.Browser.GetHost().WasResized();
-                _data.Texture.Dispose();
+                NativeWebView.rnw_browser_notify_move_or_resize_started(_browserHandle);
+                NativeWebView.rnw_browser_was_resized(_browserHandle);
+                _data!.Texture.Dispose();
                 _data.Texture = _clyde.CreateBlankTexture<Rgba32>((Owner.PixelWidth, Owner.PixelHeight));
-                _data.Browser.GetHost().Invalidate(CefPaintElementType.View);
+                NativeWebView.rnw_browser_invalidate(_browserHandle);
             }
 
             public void Draw(DrawingHandleScreen handle)
             {
-                if (_data == null)
-                    return;
+                if (_data == null) return;
 
-                // update texture only when CEF has rendered new content
-                if (_data.Renderer.IsDirty)
+                if (_data.IsDirty)
                 {
-                    _data.Renderer.IsDirty = false;
-
-                    var bufImg = _data.Renderer.Buffer.Buffer;
-
+                    _data.IsDirty = false;
+                    var bufImg = _data.Buffer.Buffer;
                     _data.Texture.SetSubImage(
                         Vector2i.Zero,
                         bufImg,
@@ -430,73 +427,62 @@ namespace Robust.Client.WebView.Cef
                 handle.DrawTexture(_data.Texture, Vector2.Zero);
             }
 
-            public void StopLoad()
+            public unsafe void StopLoad()
             {
-                if (_data == null)
-                    throw new InvalidOperationException();
-
-                _data.Browser.StopLoad();
+                if (_browserHandle == 0) throw new InvalidOperationException();
+                NativeWebView.rnw_browser_stop_load(_browserHandle);
             }
 
             public void Reload()
             {
-                if (_data == null)
-                    throw new InvalidOperationException();
-
-                _data.Browser.Reload();
+                if (_browserHandle == 0) throw new InvalidOperationException();
+                NativeWebView.rnw_browser_reload(_browserHandle);
             }
 
             public bool GoBack()
             {
-                if (_data == null)
-                    throw new InvalidOperationException();
-
-                if (!_data.Browser.CanGoBack)
+                if (_browserHandle == 0) throw new InvalidOperationException();
+                if (NativeWebView.rnw_browser_can_go_back(_browserHandle) == 0)
                     return false;
-
-                _data.Browser.GoBack();
+                NativeWebView.rnw_browser_go_back(_browserHandle);
                 return true;
             }
 
             public bool GoForward()
             {
-                if (_data == null)
-                    throw new InvalidOperationException();
-
-                if (!_data.Browser.CanGoForward)
+                if (_browserHandle == 0) throw new InvalidOperationException();
+                if (NativeWebView.rnw_browser_can_go_forward(_browserHandle) == 0)
                     return false;
-
-                _data.Browser.GoForward();
+                NativeWebView.rnw_browser_go_forward(_browserHandle);
                 return true;
             }
 
-            public void ExecuteJavaScript(string code)
+            public unsafe void ExecuteJavaScript(string code)
             {
-                if (_data == null)
-                    throw new InvalidOperationException();
-
-                // TODO: this should not run until the browser is done loading seriously does this even work?
-                _data.Browser.GetMainFrame().ExecuteJavaScript(code, string.Empty, 1);
+                if (_browserHandle == 0) throw new InvalidOperationException();
+                var utf8 = MarshalStringToUtf8(code);
+                NativeWebView.rnw_browser_execute_js(_browserHandle, (byte*)utf8);
+                Marshal.FreeHGlobal(utf8);
             }
 
             public void AddResourceRequestHandler(Action<IRequestHandlerContext> handler)
             {
-                _requestHandler.AddResourceRequestHandler(handler);
+                lock (_resourceRequestHandlers) _resourceRequestHandlers.Add(handler);
             }
 
             public void RemoveResourceRequestHandler(Action<IRequestHandlerContext> handler)
             {
-                _requestHandler.RemoveResourceRequestHandler(handler);
+                lock (_resourceRequestHandlers) _resourceRequestHandlers.Remove(handler);
             }
 
             public void AddBeforeBrowseHandler(Action<IBeforeBrowseContext> handler)
             {
-                _requestHandler.AddBeforeBrowseHandler(handler);
+                lock (_beforeBrowseHandlers) _beforeBrowseHandlers.Add(handler);
             }
 
             public void RemoveBeforeBrowseHandler(Action<IBeforeBrowseContext> handler)
             {
-                _requestHandler.RemoveBeforeBrowseHandler(handler);
+                lock (_beforeBrowseHandlers) _beforeBrowseHandlers.Remove(handler);
             }
 
             public void FocusEntered()
@@ -525,124 +511,173 @@ namespace Robust.Client.WebView.Cef
                     Owner.Root?.Window?.TextInputStop();
             }
 
+            // ================================================================
+            // Static unmanaged callbacks (called from Rust)
+            // ================================================================
+
+            private static unsafe ControlImpl? Resolve(void* userData)
+            {
+                var handle = GCHandle.FromIntPtr((IntPtr)userData);
+                return handle.Target as ControlImpl;
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void OnPaintCallback(
+                void* userData, int width, int height, byte* buffer,
+                int dirtyCount, int* dirtyRects)
+            {
+                var self = Resolve(userData);
+                if (self?.Owner.Disposed != false || self._data == null) return;
+
+                for (int i = 0; i < dirtyCount; i++)
+                {
+                    int x = dirtyRects[i * 4];
+                    int y = dirtyRects[i * 4 + 1];
+                    int w = dirtyRects[i * 4 + 2];
+                    int h = dirtyRects[i * 4 + 3];
+                    self._data.Buffer.UpdateBuffer(width, height, (IntPtr)buffer, x, y, w, h);
+                }
+
+                self._data.IsDirty = true;
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void GetViewRectCallback(void* userData, int* outWidth, int* outHeight)
+            {
+                var self = Resolve(userData);
+                if (self?.Owner.Disposed != false)
+                {
+                    *outWidth = 1;
+                    *outHeight = 1;
+                    return;
+                }
+
+                *outWidth = (int)Math.Max(self.Owner.Size.X, 1);
+                *outHeight = (int)Math.Max(self.Owner.Size.Y, 1);
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void GetScreenInfoCallback(void* userData, float* outScale)
+            {
+                var self = Resolve(userData);
+                if (self?.Owner.Disposed != false)
+                {
+                    *outScale = 1.0f;
+                    return;
+                }
+
+                *outScale = self.Owner.UIScale;
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void OnVirtualKeyboardRequestedCallback(void* userData, int inputMode)
+            {
+                var self = Resolve(userData);
+                if (self == null) return;
+
+                if (inputMode == 0) // None
+                    self.TextInputStop();
+                else
+                    self.TextInputStart();
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe int OnBeforeBrowseCallback(
+                void* userData, byte* urlPtr, int userGesture, int isRedirect)
+            {
+                var self = Resolve(userData);
+                if (self == null) return 0;
+
+                var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
+                var context = new NativeBeforeBrowseContext(url, isRedirect != 0, userGesture != 0);
+
+                lock (self._beforeBrowseHandlers)
+                {
+                    foreach (var handler in self._beforeBrowseHandlers)
+                    {
+                        handler(context);
+                        if (context.IsCancelled)
+                            return 1;
+                    }
+                }
+
+                return 0;
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe int OnResourceRequestCallback(
+                void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
+            {
+                var self = Resolve(userData);
+                if (self == null) return 0;
+
+                var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
+                var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
+
+                // Deny file:// access
+                if (url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
+                    return 0;
+
+                var context = new NativeRequestHandlerContext(url, method);
+
+                lock (self._resourceRequestHandlers)
+                {
+                    foreach (var handler in self._resourceRequestHandlers)
+                    {
+                        handler(context);
+
+                        if (context.IsCancelled)
+                            return 0;
+
+                        if (context.ResponseData != null)
+                        {
+                            // Set the response via the FFI
+                            var data = context.ResponseData;
+                            var mimeUtf8 = MarshalStringToUtf8(data.MimeType);
+                            fixed (byte* dataPtr = data.Data)
+                            {
+                                NativeWebView.rnw_request_set_response(
+                                    requestId,
+                                    data.StatusCode,
+                                    (byte*)mimeUtf8,
+                                    dataPtr,
+                                    data.Data.Length);
+                            }
+                            Marshal.FreeHGlobal(mimeUtf8);
+                            return 1;
+                        }
+                    }
+                }
+
+                return 0;
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void OnLoadStartCallback(void* userData)
+            {
+                // Currently unused but required by callback struct.
+            }
+
+            [UnmanagedCallersOnly]
+            private static unsafe void OnLoadEndCallback(void* userData, int httpStatusCode)
+            {
+                // Currently unused but required by callback struct.
+            }
+
+            // ================================================================
+            // Live data
+            // ================================================================
+
             private sealed class LiveData
             {
                 public OwnedTexture Texture;
-                public readonly RobustCefClient Client;
-                public readonly CefBrowser Browser;
-                public readonly ControlRenderHandler Renderer;
+                public readonly ImageBuffer Buffer;
+                public volatile bool IsDirty;
 
-                public LiveData(
-                    OwnedTexture texture,
-                    RobustCefClient client,
-                    CefBrowser browser,
-                    ControlRenderHandler renderer)
+                public LiveData(OwnedTexture texture)
                 {
                     Texture = texture;
-                    Client = client;
-                    Browser = browser;
-                    Renderer = renderer;
-                }
-            }
-        }
-
-        private sealed class ControlRenderHandler : CefRenderHandler
-        {
-            public ImageBuffer Buffer { get; }
-            private ControlImpl _control;
-            internal volatile bool IsDirty;
-
-            internal ControlRenderHandler(ControlImpl control)
-            {
-                Buffer = new ImageBuffer();
-                _control = control;
-            }
-
-            protected override CefAccessibilityHandler? GetAccessibilityHandler() => null;
-
-            protected override void GetViewRect(CefBrowser browser, out CefRectangle rect)
-            {
-                if (_control.Owner.Disposed)
-                {
-                    rect = new CefRectangle();
-                    return;
-                }
-
-                // TODO CEF: Do we need to pass real screen coords? Cause what we do already works...
-                //var screenCoords = _control.ScreenCoordinates;
-                //rect = new CefRectangle((int) screenCoords.X, (int) screenCoords.Y, (int)Math.Max(_control.Size.X, 1), (int)Math.Max(_control.Size.Y, 1));
-
-                // We do the max between size and 1 because it will LITERALLY CRASH WITHOUT AN ERROR otherwise.
-                rect = new CefRectangle(
-                    0, 0,
-                    (int)Math.Max(_control.Owner.Size.X, 1), (int)Math.Max(_control.Owner.Size.Y, 1));
-            }
-
-            protected override bool GetScreenInfo(CefBrowser browser, CefScreenInfo screenInfo)
-            {
-                if (_control.Owner.Disposed)
-                    return false;
-
-                screenInfo.DeviceScaleFactor = _control.Owner.UIScale;
-
-                return true;
-            }
-
-            protected override void OnPopupSize(CefBrowser browser, CefRectangle rect)
-            {
-                if (_control.Owner.Disposed)
-                    return;
-            }
-
-            protected override void OnPaint(CefBrowser browser, CefPaintElementType type, CefRectangle[] dirtyRects,
-                IntPtr buffer, int width, int height)
-            {
-                if (_control.Owner.Disposed)
-                    return;
-
-                foreach (var dirtyRect in dirtyRects)
-                {
-                    Buffer.UpdateBuffer(width, height, buffer, dirtyRect);
-                }
-
-                IsDirty = true;
-            }
-
-            protected override void OnAcceleratedPaint(
-                CefBrowser browser,
-                CefPaintElementType type,
-                CefRectangle[] dirtyRects,
-                in CefAcceleratedPaintInfo info)
-            {
-                // Unused, but we're forced to implement it so.. NOOP.
-            }
-
-            protected override void OnScrollOffsetChanged(CefBrowser browser, double x, double y)
-            {
-                if (_control.Owner.Disposed)
-                    return;
-            }
-
-            protected override void OnImeCompositionRangeChanged(CefBrowser browser, CefRange selectedRange,
-                CefRectangle[] characterBounds)
-            {
-                if (_control.Owner.Disposed)
-                    return;
-            }
-
-            protected override void OnVirtualKeyboardRequested(CefBrowser browser, CefTextInputMode inputMode)
-            {
-                base.OnVirtualKeyboardRequested(browser, inputMode);
-
-                // Treat virtual keyboard requests as a guide for whether we should accept text input.
-
-                if (inputMode == CefTextInputMode.None)
-                {
-                    _control.TextInputStop();
-                }
-                else
-                {
-                    _control.TextInputStart();
+                    Buffer = new ImageBuffer();
                 }
             }
         }
