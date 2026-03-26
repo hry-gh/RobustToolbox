@@ -97,10 +97,18 @@ namespace Robust.Client.WebView.Cef
 
 #if MACOS
             // On macOS, tell Rust where to find the CEF framework.
-            var frameworkPath = PathHelpers.ExecutableRelativeFile(
-                "../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
+            var frameworkDirPath = PathHelpers.ExecutableRelativeFile(
+                "../Frameworks/Chromium Embedded Framework.framework");
+            var frameworkPath = Path.Combine(frameworkDirPath, "Chromium Embedded Framework");
+            var mainBundlePath = PathHelpers.ExecutableRelativeFile("../..");
+
             var frameworkPathUtf8 = MarshalStringToUtf8(frameworkPath);
+            var frameworkDirPathUtf8 = MarshalStringToUtf8(frameworkDirPath);
+            var mainBundlePathUtf8 = MarshalStringToUtf8(mainBundlePath);
+
             settings.FrameworkPath = (byte*)frameworkPathUtf8;
+            settings.FrameworkDirPath = (byte*)frameworkDirPathUtf8;
+            settings.MainBundlePath = (byte*)mainBundlePathUtf8;
 #endif
 
             var result = NativeWebView.rnw_initialize(&settings);
@@ -109,6 +117,8 @@ namespace Robust.Client.WebView.Cef
             // Free marshalled strings
 #if MACOS
             Marshal.FreeHGlobal(frameworkPathUtf8);
+            Marshal.FreeHGlobal(frameworkDirPathUtf8);
+            Marshal.FreeHGlobal(mainBundlePathUtf8);
 #endif
 #if !MACOS
             Marshal.FreeHGlobal(subprocessPathUtf8);

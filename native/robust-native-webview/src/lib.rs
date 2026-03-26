@@ -109,6 +109,12 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
     if !s.cookieable_schemes.is_null() {
         cef_settings.cookieable_schemes_list = unsafe { cstr_to_cef_string(s.cookieable_schemes) };
     }
+    if !s.framework_dir_path.is_null() {
+        cef_settings.framework_dir_path = unsafe { cstr_to_cef_string(s.framework_dir_path) };
+    }
+    if !s.main_bundle_path.is_null() {
+        cef_settings.main_bundle_path = unsafe { cstr_to_cef_string(s.main_bundle_path) };
+    }
 
     let mut cef_app = app::create_app();
 

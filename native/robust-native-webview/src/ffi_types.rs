@@ -15,6 +15,10 @@ pub struct RnwSettings {
     /// macOS only: path to the Chromium Embedded Framework dylib.
     /// If null, uses LibraryLoader with current_exe-relative path.
     pub framework_path: *const c_char,
+    /// macOS only: path to the framework directory (the .framework folder).
+    pub framework_dir_path: *const c_char,
+    /// macOS only: path to the main bundle (app .app directory).
+    pub main_bundle_path: *const c_char,
 }
 
 /// Key event passed from C# to send to a browser.
