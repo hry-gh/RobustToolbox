@@ -145,6 +145,8 @@ internal unsafe struct RnwSettings
     public byte* CachePath;
     public byte* UserAgent;
     public byte* CookieableSchemes;
+    /// macOS only: path to the Chromium Embedded Framework dylib.
+    public byte* FrameworkPath;
 }
 
 [StructLayout(LayoutKind.Sequential)]

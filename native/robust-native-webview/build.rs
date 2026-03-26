@@ -15,6 +15,10 @@ fn main() {
             .cpp(true)
             .flag("--std=c++17")
             .file("src/mac_application.mm")
+            // Use macOS native ar to produce BSD-format archives.
+            // GNU ar (e.g. from Homebrew binutils) produces archives
+            // incompatible with macOS's -force_load linker flag.
+            .archiver("/usr/bin/ar")
             .link_lib_modifier("+whole-archive")
             .warnings(false)
             .compile("mac_application");

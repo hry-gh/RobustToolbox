@@ -59,11 +59,23 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
 
     #[cfg(target_os = "macos")]
     {
-        let loader =
-            cef::library_loader::LibraryLoader::new(&std::env::current_exe().unwrap(), false);
-        assert!(loader.load());
-        // Intentionally leak: the library must stay loaded for the process lifetime.
-        std::mem::forget(loader);
+        if !s.framework_path.is_null() {
+            // Use the explicit path provided by C#.
+            let path_str = cstr_to_string(s.framework_path)
+                .expect("framework_path is not valid UTF-8");
+            let path = std::path::PathBuf::from(path_str);
+            use std::os::unix::ffi::OsStrExt;
+            let cstr = std::ffi::CString::new(path.as_os_str().as_bytes())
+                .expect("framework_path contains null bytes");
+            let result = cef::load_library(Some(unsafe { &*cstr.as_ptr().cast() }));
+            assert_eq!(result, 1, "Failed to load CEF framework from provided path");
+        } else {
+            let loader =
+                cef::library_loader::LibraryLoader::new(&std::env::current_exe().unwrap(), false);
+            assert!(loader.load());
+            // Intentionally leak: the library must stay loaded for the process lifetime.
+            std::mem::forget(loader);
+        }
     }
 
     cef::api_hash(cef::sys::CEF_API_VERSION_14100, 0);

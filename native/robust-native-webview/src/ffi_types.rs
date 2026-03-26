@@ -12,6 +12,9 @@ pub struct RnwSettings {
     pub cache_path: *const c_char,
     pub user_agent: *const c_char,          // null if not overridden
     pub cookieable_schemes: *const c_char,  // e.g. "usr,res"
+    /// macOS only: path to the Chromium Embedded Framework dylib.
+    /// If null, uses LibraryLoader with current_exe-relative path.
+    pub framework_path: *const c_char,
 }
 
 /// Key event passed from C# to send to a browser.

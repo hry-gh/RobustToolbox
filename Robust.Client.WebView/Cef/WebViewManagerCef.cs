@@ -95,10 +95,21 @@ namespace Robust.Client.WebView.Cef
                 settings.UserAgent = (byte*)userAgentUtf8;
             }
 
+#if MACOS
+            // On macOS, tell Rust where to find the CEF framework.
+            var frameworkPath = PathHelpers.ExecutableRelativeFile(
+                "../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
+            var frameworkPathUtf8 = MarshalStringToUtf8(frameworkPath);
+            settings.FrameworkPath = (byte*)frameworkPathUtf8;
+#endif
+
             var result = NativeWebView.rnw_initialize(&settings);
             _sawmill.Info($"CEF initialized via cef-rs, result: {result}");
 
             // Free marshalled strings
+#if MACOS
+            Marshal.FreeHGlobal(frameworkPathUtf8);
+#endif
 #if !MACOS
             Marshal.FreeHGlobal(subprocessPathUtf8);
             Marshal.FreeHGlobal(resourcesDirUtf8);
