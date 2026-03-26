@@ -47,11 +47,7 @@ namespace Robust.Client.WebView.Cef
 
             var subProcessName = OperatingSystem.IsWindows() ? "cef-helper.exe" : "cef-helper";
             var subProcessPath = Path.Combine(BasePath, subProcessName);
-            var cefResourcesPath = LocateCefResources();
-            _sawmill.Debug($"Subprocess path: {subProcessPath}, resources: {cefResourcesPath}");
-
-            if (cefResourcesPath == null)
-                throw new InvalidOperationException("Unable to locate cef_resources directory!");
+            _sawmill.Debug($"Subprocess path: {subProcessPath}");
 
             var remoteDebugPort = _cfg.GetCVar(WCVars.WebRemoteDebugPort);
             var cachePath = FindAndLockCacheDirectory();
@@ -67,8 +63,9 @@ namespace Robust.Client.WebView.Cef
             settings.SubprocessPath = (byte*)subprocessPathUtf8;
 
 #if !MACOS
-            var localesDirUtf8 = MarshalStringToUtf8(Path.Combine(cefResourcesPath, "locales"));
-            var resourcesDirUtf8 = MarshalStringToUtf8(cefResourcesPath);
+            // CEF resources (icudtl.dat, *.pak, locales/) are expected alongside the executable.
+            var localesDirUtf8 = MarshalStringToUtf8(Path.Combine(BasePath, "locales"));
+            var resourcesDirUtf8 = MarshalStringToUtf8(BasePath);
             settings.ResourcesDirPath = (byte*)resourcesDirUtf8;
             settings.LocalesDirPath = (byte*)localesDirUtf8;
 #endif
@@ -198,36 +195,6 @@ namespace Robust.Client.WebView.Cef
                 System.Console.Error.WriteLine($"[rnw] SchemeHandlerCallback exception: {ex}");
                 return 0;
             }
-        }
-
-        private static string? LocateCefResources()
-        {
-            if (ProbeDir(BasePath, out var path))
-                return path;
-
-            foreach (var searchDir in NativeDllSearchDirectories())
-            {
-                if (ProbeDir(searchDir, out path))
-                    return path;
-            }
-
-            return null;
-
-            static bool ProbeDir(string dir, out string path)
-            {
-                path = Path.Combine(dir, "cef_resources");
-                return Directory.Exists(path);
-            }
-        }
-
-        internal static string[] NativeDllSearchDirectories()
-        {
-            var sepChar = OperatingSystem.IsWindows() ? ';' : ':';
-
-            var searchDirectories = ((string)AppContext.GetData("NATIVE_DLL_SEARCH_DIRECTORIES")!)
-                .Split(sepChar, StringSplitOptions.RemoveEmptyEntries);
-
-            return searchDirectories;
         }
 
         public void Update()
