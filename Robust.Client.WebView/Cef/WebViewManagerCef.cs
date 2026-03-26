@@ -45,18 +45,7 @@ namespace Robust.Client.WebView.Cef
                 _localization.GetString("cmd-flushcookies-help"),
                 (_, _, _) => NativeWebView.rnw_flush_cookies());
 
-#if MACOS
-            var subProcessPath = Path.Combine(BasePath, "cef-helper");
-            _sawmill.Debug($"Subprocess path: {subProcessPath}");
-#else
-            string subProcessName;
-            if (OperatingSystem.IsWindows())
-                subProcessName = "Robust.Client.WebView.exe";
-            else if (OperatingSystem.IsLinux() || OperatingSystem.IsMacOS())
-                subProcessName = "Robust.Client.WebView";
-            else
-                throw new NotSupportedException("Unsupported platform for CEF!");
-
+            var subProcessName = OperatingSystem.IsWindows() ? "cef-helper.exe" : "cef-helper";
             var subProcessPath = Path.Combine(BasePath, subProcessName);
             var cefResourcesPath = LocateCefResources();
             _sawmill.Debug($"Subprocess path: {subProcessPath}, resources: {cefResourcesPath}");
