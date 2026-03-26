@@ -1,24 +1,14 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use cef::Browser;
 
-use crate::ffi_types::{PendingResponse, RnwBrowserCallbacks};
+use crate::ffi_types::PendingResponse;
 
-/// A single browser instance tracked by the FFI layer.
-pub struct BrowserEntry {
-    pub browser: Browser,
-    #[allow(dead_code)]
-    pub callbacks: RnwBrowserCallbacks,
-}
-
-/// Global state shared across all FFI calls.
 pub struct GlobalState {
-    pub browsers: HashMap<u64, BrowserEntry>,
+    pub browsers: HashMap<u64, Browser>,
     pub next_handle: u64,
-    /// Pending resource request responses, keyed by request_id.
-    pub pending_responses: HashMap<u64, PendingResponse>,
-    pub next_request_id: u64,
 }
 
 impl GlobalState {
@@ -26,51 +16,35 @@ impl GlobalState {
         Self {
             browsers: HashMap::new(),
             next_handle: 1,
-            pending_responses: HashMap::new(),
-            next_request_id: 1,
         }
     }
 
-    pub fn insert_browser(&mut self, browser: Browser, callbacks: RnwBrowserCallbacks) -> u64 {
+    pub fn insert_browser(&mut self, browser: Browser) -> u64 {
         let handle = self.next_handle;
         self.next_handle += 1;
-        self.browsers.insert(
-            handle,
-            BrowserEntry {
-                browser,
-                callbacks,
-            },
-        );
+        self.browsers.insert(handle, browser);
         handle
-    }
-
-    pub fn alloc_request_id(&mut self) -> u64 {
-        let id = self.next_request_id;
-        self.next_request_id += 1;
-        id
     }
 }
 
 pub static GLOBAL: Mutex<Option<GlobalState>> = Mutex::new(None);
 
-/// Helper to run a closure with the global state locked.
-/// Returns None if CEF is not initialized.
+// Thread-local slot for passing a response from C# back to the calling Rust code.
+thread_local! {
+    pub static PENDING_RESPONSE: RefCell<Option<PendingResponse>> = const { RefCell::new(None) };
+}
+
 pub fn with_state<F, R>(f: F) -> Option<R>
 where
     F: FnOnce(&mut GlobalState) -> R,
 {
     let mut guard = GLOBAL.lock().ok()?;
-    let state = guard.as_mut()?;
-    Some(f(state))
+    Some(f(guard.as_mut()?))
 }
 
-/// Helper to run a closure with a specific browser entry.
-/// Returns None if the browser handle is invalid.
-pub fn with_browser<F, R>(handle: u64, f: F) -> Option<R>
-where
-    F: FnOnce(&mut BrowserEntry) -> R,
-{
-    with_state(|state| {
-        state.browsers.get_mut(&handle).map(|entry| f(entry))
-    })?
+/// The lock is released before returning, so it's safe to call
+/// CEF methods that might trigger callbacks back into Rust.
+pub fn get_browser(handle: u64) -> Option<Browser> {
+    let guard = GLOBAL.lock().ok()?;
+    guard.as_ref()?.browsers.get(&handle).cloned()
 }

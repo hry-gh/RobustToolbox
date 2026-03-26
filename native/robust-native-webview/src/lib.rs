@@ -11,20 +11,16 @@ mod resource_handler;
 mod scheme_handler;
 mod state;
 
-use std::ffi::{CStr, c_char};
+use std::ffi::{CStr, CString, c_char};
 use std::ptr;
 use std::sync::Arc;
 
 use cef::string::CefStringUtf8;
 use cef::*;
 
-use ffi_types::{PendingResponse, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings};
+use ffi_types::{PendingResponse, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings, RNW_ERROR, RNW_HANDLE_INVALID};
 use render_handler::CallbackData;
-use state::{GLOBAL, GlobalState, with_browser, with_state};
-
-// ============================================================================
-// Helpers
-// ============================================================================
+use state::{GLOBAL, GlobalState, get_browser, with_state};
 
 unsafe fn cstr_to_string(p: *const c_char) -> Option<String> {
     if p.is_null() {
@@ -46,23 +42,26 @@ unsafe fn cstr_to_cef_string(p: *const c_char) -> CefString {
     }
 }
 
-// ============================================================================
-// Lifecycle
-// ============================================================================
+pub(crate) fn cef_userfree_to_cstring(s: &CefStringUserfree, default: &str) -> Option<CString> {
+    let utf16 = CefStringUtf16::from(s);
+    let utf8 = CefStringUtf8::from(&utf16);
+    CString::new(utf8.as_str().unwrap_or(default)).ok()
+}
+
+// --- Lifecycle ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
     if settings.is_null() {
-        return -1;
+        return RNW_ERROR;
     }
     let s = unsafe { &*settings };
 
     #[cfg(target_os = "macos")]
     {
         if !s.framework_path.is_null() {
-            // Use the explicit path provided by C#.
-            let path_str = cstr_to_string(s.framework_path)
-                .expect("framework_path is not valid UTF-8");
+            let path_str =
+                cstr_to_string(s.framework_path).expect("framework_path is not valid UTF-8");
             let path = std::path::PathBuf::from(path_str);
             use std::os::unix::ffi::OsStrExt;
             let cstr = std::ffi::CString::new(path.as_os_str().as_bytes())
@@ -125,7 +124,6 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
         ptr::null_mut(),
     );
 
-    // Initialize global state
     {
         let mut guard = GLOBAL.lock().unwrap();
         *guard = Some(GlobalState::new());
@@ -141,7 +139,6 @@ pub extern "C" fn rnw_do_message_loop_work() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_shutdown() {
-    // Drop all browser entries first
     {
         let mut guard = GLOBAL.lock().unwrap();
         *guard = None;
@@ -156,9 +153,7 @@ pub extern "C" fn rnw_flush_cookies() {
     }
 }
 
-// ============================================================================
-// Browser Management
-// ============================================================================
+// --- Browser Management ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_create(
@@ -168,7 +163,7 @@ pub unsafe extern "C" fn rnw_browser_create(
     callbacks: *const RnwBrowserCallbacks,
 ) -> u64 {
     if callbacks.is_null() {
-        return 0;
+        return RNW_HANDLE_INVALID;
     }
     let cbs = *callbacks;
     let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
@@ -201,114 +196,108 @@ pub unsafe extern "C" fn rnw_browser_create(
 
     match browser {
         Some(browser) => {
-            let handle = with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0);
-            handle
+            with_state(|state| state.insert_browser(browser)).unwrap_or(RNW_HANDLE_INVALID)
         }
-        None => {
-            0
-        }
+        None => RNW_HANDLE_INVALID,
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_close(handle: u64) {
-    // Remove from state and close
-    let entry = with_state(|state| state.browsers.remove(&handle));
-    if let Some(Some(entry)) = entry {
-        if let Some(host) = entry.browser.host() {
+    let browser = with_state(|state| state.browsers.remove(&handle));
+    if let Some(Some(browser)) = browser {
+        if let Some(host) = browser.host() {
             host.close_browser(1);
         }
     }
 }
 
-// ============================================================================
-// Navigation
-// ============================================================================
+// --- Navigation ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_len: i32) -> i32 {
-    let url = with_browser(handle, |entry| {
-        entry.browser.main_frame().map(|frame| {
-            let url_userfree = frame.url();
-            let url_utf16 = CefStringUtf16::from(&url_userfree);
-            let url_utf8 = CefStringUtf8::from(&url_utf16);
-            url_utf8.as_str().unwrap_or("").to_string()
-        })
-    });
-
-    match url {
-        Some(Some(url)) => {
-            let bytes = url.as_bytes();
-            let copy_len = bytes.len().min((buf_len as usize).saturating_sub(1));
-            if !buf.is_null() && buf_len > 0 {
-                ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
-                *buf.add(copy_len) = 0;
-            }
-            bytes.len() as i32
-        }
-        _ => -1,
+    let Some(browser) = get_browser(handle) else { return RNW_ERROR };
+    let Some(frame) = browser.main_frame() else { return RNW_ERROR };
+    let url_userfree = frame.url();
+    let url_utf16 = CefStringUtf16::from(&url_userfree);
+    let url_utf8 = CefStringUtf8::from(&url_utf16);
+    let url = url_utf8.as_str().unwrap_or("");
+    let bytes = url.as_bytes();
+    let copy_len = bytes.len().min((buf_len as usize).saturating_sub(1));
+    if !buf.is_null() && buf_len > 0 {
+        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
+        *buf.add(copy_len) = 0;
     }
+    bytes.len() as i32
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_load_url(handle: u64, url: *const c_char) {
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
     let cef_url = cstr_to_cef_string(url);
-    with_browser(handle, |entry| {
-        if let Some(frame) = entry.browser.main_frame() {
-            frame.load_url(Some(&cef_url));
-        }
-    });
+    if let Some(frame) = browser.main_frame() {
+        frame.load_url(Some(&cef_url));
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_execute_js(handle: u64, code: *const c_char) {
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
     let cef_code = cstr_to_cef_string(code);
     let empty = CefString::from("");
-    with_browser(handle, |entry| {
-        if let Some(frame) = entry.browser.main_frame() {
-            frame.execute_java_script(Some(&cef_code), Some(&empty), 1);
-        }
-    });
+    if let Some(frame) = browser.main_frame() {
+        frame.execute_java_script(Some(&cef_code), Some(&empty), 1);
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_is_loading(handle: u64) -> i32 {
-    with_browser(handle, |entry| entry.browser.is_loading()).unwrap_or(0)
+    get_browser(handle).map(|b| b.is_loading()).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_can_go_back(handle: u64) -> i32 {
-    with_browser(handle, |entry| entry.browser.can_go_back()).unwrap_or(0)
+    get_browser(handle).map(|b| b.can_go_back()).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_can_go_forward(handle: u64) -> i32 {
-    with_browser(handle, |entry| entry.browser.can_go_forward()).unwrap_or(0)
+    get_browser(handle).map(|b| b.can_go_forward()).unwrap_or(0)
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_go_back(handle: u64) {
-    with_browser(handle, |entry| entry.browser.go_back());
+    if let Some(b) = get_browser(handle) {
+        b.go_back();
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_go_forward(handle: u64) {
-    with_browser(handle, |entry| entry.browser.go_forward());
+    if let Some(b) = get_browser(handle) {
+        b.go_forward();
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_reload(handle: u64) {
-    with_browser(handle, |entry| entry.browser.reload());
+    if let Some(b) = get_browser(handle) {
+        b.reload();
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_stop_load(handle: u64) {
-    with_browser(handle, |entry| entry.browser.stop_load());
+    if let Some(b) = get_browser(handle) {
+        b.stop_load();
+    }
 }
 
-// ============================================================================
-// Input
-// ============================================================================
+// --- Input ---
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_send_mouse_move(
@@ -318,12 +307,12 @@ pub extern "C" fn rnw_browser_send_mouse_move(
     modifiers: u32,
     mouse_leave: i32,
 ) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            let event = MouseEvent { x, y, modifiers };
-            host.send_mouse_move_event(Some(&event), mouse_leave);
-        }
-    });
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
+    if let Some(host) = browser.host() {
+        host.send_mouse_move_event(Some(&MouseEvent { x, y, modifiers }), mouse_leave);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -336,17 +325,22 @@ pub extern "C" fn rnw_browser_send_mouse_click(
     mouse_up: i32,
     click_count: i32,
 ) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            let event = MouseEvent { x, y, modifiers };
-            let button_type = match button {
-                1 => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_MIDDLE),
-                2 => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_RIGHT),
-                _ => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_LEFT),
-            };
-            host.send_mouse_click_event(Some(&event), button_type, mouse_up, click_count);
-        }
-    });
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
+    if let Some(host) = browser.host() {
+        let button_type = match button {
+            1 => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_MIDDLE),
+            2 => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_RIGHT),
+            _ => MouseButtonType::from(cef::sys::cef_mouse_button_type_t::MBT_LEFT),
+        };
+        host.send_mouse_click_event(
+            Some(&MouseEvent { x, y, modifiers }),
+            button_type,
+            mouse_up,
+            click_count,
+        );
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -358,12 +352,12 @@ pub extern "C" fn rnw_browser_send_mouse_wheel(
     delta_x: i32,
     delta_y: i32,
 ) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            let event = MouseEvent { x, y, modifiers };
-            host.send_mouse_wheel_event(Some(&event), delta_x, delta_y);
-        }
-    });
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
+    if let Some(host) = browser.host() {
+        host.send_mouse_wheel_event(Some(&MouseEvent { x, y, modifiers }), delta_x, delta_y);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -371,13 +365,15 @@ pub unsafe extern "C" fn rnw_browser_send_key_event(handle: u64, event: *const R
     if event.is_null() {
         return;
     }
+    let Some(browser) = get_browser(handle) else {
+        return;
+    };
     let e = &*event;
     let event_type = match e.event_type {
         1 => KeyEventType::from(cef::sys::cef_key_event_type_t::KEYEVENT_KEYUP),
         2 => KeyEventType::from(cef::sys::cef_key_event_type_t::KEYEVENT_CHAR),
         _ => KeyEventType::from(cef::sys::cef_key_event_type_t::KEYEVENT_RAWKEYDOWN),
     };
-
     let key_event = KeyEvent {
         size: std::mem::size_of::<cef::sys::_cef_key_event_t>(),
         type_: event_type,
@@ -389,51 +385,46 @@ pub unsafe extern "C" fn rnw_browser_send_key_event(handle: u64, event: *const R
         unmodified_character: e.unmodified_character,
         focus_on_editable_field: 0,
     };
-
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            host.send_key_event(Some(&key_event));
-        }
-    });
+    if let Some(host) = browser.host() {
+        host.send_key_event(Some(&key_event));
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_was_resized(handle: u64) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            host.was_resized();
+    if let Some(b) = get_browser(handle) {
+        if let Some(h) = b.host() {
+            h.was_resized();
         }
-    });
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_invalidate(handle: u64) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            host.invalidate(PaintElementType::from(
+    if let Some(b) = get_browser(handle) {
+        if let Some(h) = b.host() {
+            h.invalidate(PaintElementType::from(
                 cef::sys::cef_paint_element_type_t::PET_VIEW,
             ));
         }
-    });
+    }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_notify_move_or_resize_started(handle: u64) {
-    with_browser(handle, |entry| {
-        if let Some(host) = entry.browser.host() {
-            host.notify_move_or_resize_started();
+    if let Some(b) = get_browser(handle) {
+        if let Some(h) = b.host() {
+            h.notify_move_or_resize_started();
         }
-    });
+    }
 }
 
-// ============================================================================
-// Resource Request Response
-// ============================================================================
+// --- Resource Request Response ---
 
 /// Called by C# from within an on_resource_request callback to set the response data.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_request_set_response(
-    request_id: u64,
+    _request_id: u64,
     status_code: i32,
     mime_type: *const c_char,
     data: *const u8,
@@ -446,23 +437,17 @@ pub unsafe extern "C" fn rnw_request_set_response(
         Vec::new()
     };
 
-    with_state(|state| {
-        state.pending_responses.insert(
-            request_id,
-            PendingResponse {
-                status_code,
-                mime_type: mime,
-                data: data_vec,
-            },
-        );
+    state::PENDING_RESPONSE.with(|cell| {
+        *cell.borrow_mut() = Some(PendingResponse {
+            status_code,
+            mime_type: mime,
+            data: data_vec,
+        });
     });
 }
 
-// ============================================================================
-// Scheme Handler Registration
-// ============================================================================
+// --- Scheme Handler Registration ---
 
-/// Register a scheme handler factory for the "res" scheme.
 /// The callback is called synchronously for each request.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_register_res_scheme_handler(
@@ -482,7 +467,6 @@ pub unsafe extern "C" fn rnw_register_res_scheme_handler(
     );
 }
 
-/// Register a scheme handler factory for any scheme/domain combination.
 /// The callback is called synchronously for each request to that scheme+domain.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_register_scheme_handler(
@@ -507,9 +491,7 @@ pub unsafe extern "C" fn rnw_register_scheme_handler(
     );
 }
 
-// ============================================================================
-// Window Browser (popup)
-// ============================================================================
+// --- Window Browser (popup) ---
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_window_create(
@@ -519,7 +501,7 @@ pub unsafe extern "C" fn rnw_window_create(
     callbacks: *const RnwBrowserCallbacks,
 ) -> u64 {
     if callbacks.is_null() {
-        return 0;
+        return RNW_HANDLE_INVALID;
     }
     let cbs = *callbacks;
     let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
@@ -556,8 +538,8 @@ pub unsafe extern "C" fn rnw_window_create(
     );
 
     match browser {
-        Some(browser) => with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0),
-        None => 0,
+        Some(browser) => with_state(|state| state.insert_browser(browser)).unwrap_or(RNW_HANDLE_INVALID),
+        None => RNW_HANDLE_INVALID,
     }
 }
 

@@ -1,7 +1,9 @@
 use std::ffi::c_char;
 use std::os::raw::c_void;
 
-/// Settings passed from C# to initialize CEF.
+pub const RNW_HANDLE_INVALID: u64 = 0;
+pub const RNW_ERROR: i32 = -1;
+
 #[repr(C)]
 pub struct RnwSettings {
     pub no_sandbox: i32,
@@ -21,7 +23,6 @@ pub struct RnwSettings {
     pub main_bundle_path: *const c_char,
 }
 
-/// Key event passed from C# to send to a browser.
 #[repr(C)]
 pub struct RnwKeyEvent {
     /// 0 = RawKeyDown, 1 = KeyUp, 2 = Char
@@ -34,13 +35,11 @@ pub struct RnwKeyEvent {
     pub is_system_key: i32,
 }
 
-/// Per-browser callbacks from Rust to C#.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RnwBrowserCallbacks {
     pub user_data: *mut c_void,
 
-    /// Called when CEF has painted new content.
     /// dirty_rects is a flat array of [x, y, w, h, ...] with dirty_count entries.
     pub on_paint: Option<
         unsafe extern "C" fn(
@@ -53,19 +52,16 @@ pub struct RnwBrowserCallbacks {
         ),
     >,
 
-    /// Called to get the view rect dimensions.
     pub get_view_rect:
         Option<unsafe extern "C" fn(user_data: *mut c_void, out_width: *mut i32, out_height: *mut i32)>,
 
-    /// Called to get the screen scale factor.
     pub get_screen_info:
         Option<unsafe extern "C" fn(user_data: *mut c_void, out_scale: *mut f32)>,
 
-    /// Called when virtual keyboard requested state changes.
     pub on_virtual_keyboard_requested:
         Option<unsafe extern "C" fn(user_data: *mut c_void, input_mode: i32)>,
 
-    /// Called before a navigation. Return 1 to cancel, 0 to allow.
+    /// Return 1 to cancel, 0 to allow.
     pub on_before_browse: Option<
         unsafe extern "C" fn(
             user_data: *mut c_void,
@@ -75,8 +71,8 @@ pub struct RnwBrowserCallbacks {
         ) -> i32,
     >,
 
-    /// Called when a resource request is made. Return 1 if handled (caller must
-    /// call rnw_request_set_response before returning), 0 to let CEF handle it.
+    /// Return 1 if handled (caller must call rnw_request_set_response before returning),
+    /// 0 to let CEF handle it.
     pub on_resource_request: Option<
         unsafe extern "C" fn(
             user_data: *mut c_void,
@@ -86,13 +82,8 @@ pub struct RnwBrowserCallbacks {
         ) -> i32,
     >,
 
-    /// Called when page starts loading.
     pub on_load_start: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
-
-    /// Called when page finishes loading.
     pub on_load_end: Option<unsafe extern "C" fn(user_data: *mut c_void, http_status_code: i32)>,
-
-    /// Called before a browser is closed.
     pub on_before_close: Option<unsafe extern "C" fn(user_data: *mut c_void)>,
 }
 
@@ -101,7 +92,7 @@ pub struct RnwBrowserCallbacks {
 unsafe impl Send for RnwBrowserCallbacks {}
 unsafe impl Sync for RnwBrowserCallbacks {}
 
-/// Response data for a resource request, set by C# before returning from on_resource_request.
+/// Set by C# before returning from on_resource_request.
 pub struct PendingResponse {
     pub status_code: i32,
     pub mime_type: String,

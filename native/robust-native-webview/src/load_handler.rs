@@ -30,15 +30,6 @@ wrap_load_handler! {
             unsafe { cb(self.data.callbacks.user_data, http_status_code) };
         }
 
-        fn on_load_error(
-            &self,
-            _browser: Option<&mut Browser>,
-            _frame: Option<&mut Frame>,
-            _error_code: Errorcode,
-            _error_text: Option<&CefString>,
-            _failed_url: Option<&CefString>,
-        ) {
-        }
     }
 }
 

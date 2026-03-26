@@ -5,7 +5,6 @@ use cef::*;
 
 use crate::ffi_types::PendingResponse;
 
-/// A ResourceHandler that serves pre-buffered data from a PendingResponse.
 struct ResponseState {
     response: PendingResponse,
     offset: usize,
@@ -79,7 +78,7 @@ wrap_resource_handler! {
     }
 }
 
-fn create_buffered_resource_handler(response: PendingResponse) -> ResourceHandler {
+pub fn create_buffered_resource_handler(response: PendingResponse) -> ResourceHandler {
     let state = Arc::new(Mutex::new(ResponseState {
         response,
         offset: 0,
@@ -87,22 +86,29 @@ fn create_buffered_resource_handler(response: PendingResponse) -> ResourceHandle
     BufferedResourceHandler::new(state)
 }
 
-// A ResourceRequestHandler that returns our buffered handler.
 wrap_resource_request_handler! {
     struct BufferedResourceRequestHandler {
         response: Arc<Mutex<Option<PendingResponse>>>,
     }
 
     impl ResourceRequestHandler {
+        fn on_before_resource_load(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _callback: Option<&mut Callback>,
+        ) -> ReturnValue {
+            ReturnValue::from(cef::sys::cef_return_value_t::RV_CONTINUE)
+        }
+
         fn resource_handler(
             &self,
             _browser: Option<&mut Browser>,
             _frame: Option<&mut Frame>,
             _request: Option<&mut Request>,
         ) -> Option<ResourceHandler> {
-            eprintln!("[rnw] BufferedResourceRequestHandler::resource_handler called!");
             let response = self.response.lock().unwrap().take()?;
-            eprintln!("[rnw] serving response: status={} mime={} len={}", response.status_code, response.mime_type, response.data.len());
             Some(create_buffered_resource_handler(response))
         }
     }

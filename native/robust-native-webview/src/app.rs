@@ -1,6 +1,5 @@
 use cef::*;
 
-// CefSchemeOptions constants
 const SCHEME_STANDARD: i32 = 1 << 0;
 const SCHEME_SECURE: i32 = 1 << 3;
 
@@ -15,28 +14,18 @@ wrap_app! {
         ) {
             let Some(cmd) = command_line else { return };
 
-            // Disable zygote on Linux.
             cmd.append_switch(Some(&"--no-zygote".into()));
-
-            // Enable off-screen rendering.
             cmd.append_switch(Some(&"--off-screen-rendering-enabled".into()));
-
-            // Disable threaded scrolling.
             cmd.append_switch_with_value(
                 Some(&"disable-threaded-scrolling".into()),
                 Some(&"1".into()),
             );
-
-            // Disable touch/wheel scroll latching.
             cmd.append_switch_with_value(
                 Some(&"disable-features".into()),
                 Some(&"TouchpadAndWheelScrollLatching,AsyncWheelEvents".into()),
             );
-
-            // Use a mock keychain to avoid macOS Keychain access prompts.
+            // Avoid macOS Keychain access prompts.
             cmd.append_switch(Some(&"--use-mock-keychain".into()));
-
-            // Disable all background networking (GCM, safe browsing, etc.)
             cmd.append_switch(Some(&"--disable-background-networking".into()));
         }
 

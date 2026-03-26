@@ -8,10 +8,6 @@ pub struct CallbackData {
     pub callbacks: RnwBrowserCallbacks,
 }
 
-// Safety: function pointers + opaque user_data, C# handles thread safety
-unsafe impl Send for CallbackData {}
-unsafe impl Sync for CallbackData {}
-
 wrap_render_handler! {
     struct RobustRenderHandler {
         data: Arc<CallbackData>,
