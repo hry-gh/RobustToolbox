@@ -137,8 +137,6 @@ namespace Robust.Client.WebView.Cef
                 RegisterSchemeHandler("res", "");
             }
 
-            // Register http://127.0.0.1 handler for local resource serving.
-            RegisterSchemeHandler("http", "127.0.0.1");
         }
 
         private unsafe void RegisterSchemeHandler(string scheme, string domain)
@@ -162,8 +160,6 @@ namespace Robust.Client.WebView.Cef
                 var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
                 var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
                 var uri = new Uri(url);
-
-                System.Console.Error.WriteLine($"[rnw-cs] SchemeHandlerCallback: url={url} method={method}");
 
                 var instance = _instance;
                 if (instance == null)

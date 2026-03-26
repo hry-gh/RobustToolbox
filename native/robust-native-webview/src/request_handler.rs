@@ -2,7 +2,6 @@ use std::ffi::CString;
 use std::sync::Arc;
 
 use cef::*;
-use cef::rc::*;
 use cef::string::CefStringUtf8;
 
 use crate::render_handler::CallbackData;
@@ -55,7 +54,6 @@ wrap_request_handler! {
             disable_default_handling: Option<&mut ::std::os::raw::c_int>,
         ) -> Option<ResourceRequestHandler> {
             let Some(cb) = self.data.callbacks.on_resource_request else {
-                eprintln!("[rnw] resource_request_handler: callback is None");
                 return None;
             };
             let Some(request) = request else { return None };
@@ -86,8 +84,6 @@ wrap_request_handler! {
                 return None;
             }
 
-            eprintln!("[rnw] resource_request_handler: url={} is_nav={_is_navigation} is_dl={_is_download}", url_str.as_str().unwrap_or("?"));
-
             let handled = unsafe {
                 cb(
                     self.data.callbacks.user_data,
@@ -97,20 +93,14 @@ wrap_request_handler! {
                 )
             };
 
-            eprintln!("[rnw] resource_request_handler: handled={handled}");
-
             if handled != 0 {
-                // C# has called rnw_request_set_response before returning.
-                // Retrieve the response data and store it for this request.
                 let response = state::with_state(|s| s.pending_responses.remove(&request_id));
-                eprintln!("[rnw] resource_request_handler: response present={}", response.as_ref().map(|r| r.is_some()).unwrap_or(false));
                 if let Some(Some(response)) = response {
-                    // Store the response in the per-browser pending data so the
-                    // ResourceRequestHandler can retrieve it.
-                    let handler = resource_handler::create_resource_request_handler_with_logging(response);
-                    let raw_ptr = ImplResourceRequestHandler::get_raw(&handler);
-                    eprintln!("[rnw] resource_request_handler: returning handler ptr={raw_ptr:?}");
-                    return Some(handler);
+                    if let Some(ddh) = disable_default_handling {
+                        *ddh = 1;
+                    }
+                    eprintln!("[rnw] resource_request_handler: returning handler, data_len={}", response.data.len());
+                    return Some(resource_handler::create_resource_request_handler(response));
                 }
             }
 

@@ -1,5 +1,4 @@
 use cef::*;
-use cef::rc::*;
 
 // CefSchemeOptions constants
 const SCHEME_STANDARD: i32 = 1 << 0;

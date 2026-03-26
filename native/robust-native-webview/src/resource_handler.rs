@@ -2,7 +2,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use cef::*;
-use cef::rc::*;
 
 use crate::ffi_types::PendingResponse;
 
@@ -24,7 +23,6 @@ wrap_resource_handler! {
             handle_request: Option<&mut ::std::os::raw::c_int>,
             _callback: Option<&mut Callback>,
         ) -> ::std::os::raw::c_int {
-            eprintln!("[rnw] resource_handler: open");
             if let Some(hr) = handle_request {
                 *hr = 1;
             }
@@ -38,8 +36,6 @@ wrap_resource_handler! {
             _redirect_url: Option<&mut CefString>,
         ) {
             let lock = self.state.lock().unwrap();
-            eprintln!("[rnw] resource_handler: response_headers status={} mime={} len={}",
-                lock.response.status_code, lock.response.mime_type, lock.response.data.len());
             if let Some(response) = response {
                 response.set_status(lock.response.status_code);
                 response.set_mime_type(Some(&CefString::from(lock.response.mime_type.as_str())));
@@ -58,7 +54,6 @@ wrap_resource_handler! {
         ) -> ::std::os::raw::c_int {
             let mut lock = self.state.lock().unwrap();
             let remaining = lock.response.data.len() - lock.offset;
-            eprintln!("[rnw] resource_handler: read bytes_to_read={bytes_to_read} remaining={remaining}");
             if remaining == 0 {
                 if let Some(br) = bytes_read {
                     *br = 0;
@@ -105,9 +100,9 @@ wrap_resource_request_handler! {
             _frame: Option<&mut Frame>,
             _request: Option<&mut Request>,
         ) -> Option<ResourceHandler> {
-            let response = self.response.lock().unwrap().take();
-            eprintln!("[rnw] BufferedResourceRequestHandler::resource_handler called, has_response={}", response.is_some());
-            let response = response?;
+            eprintln!("[rnw] BufferedResourceRequestHandler::resource_handler called!");
+            let response = self.response.lock().unwrap().take()?;
+            eprintln!("[rnw] serving response: status={} mime={} len={}", response.status_code, response.mime_type, response.data.len());
             Some(create_buffered_resource_handler(response))
         }
     }
@@ -116,12 +111,4 @@ wrap_resource_request_handler! {
 pub fn create_resource_request_handler(response: PendingResponse) -> ResourceRequestHandler {
     let response = Arc::new(Mutex::new(Some(response)));
     BufferedResourceRequestHandler::new(response)
-}
-
-pub fn create_resource_request_handler_with_logging(response: PendingResponse) -> ResourceRequestHandler {
-    eprintln!("[rnw] creating ResourceRequestHandler, data_len={}", response.data.len());
-    let response = Arc::new(Mutex::new(Some(response)));
-    let handler = BufferedResourceRequestHandler::new(response);
-    eprintln!("[rnw] ResourceRequestHandler created successfully");
-    handler
 }

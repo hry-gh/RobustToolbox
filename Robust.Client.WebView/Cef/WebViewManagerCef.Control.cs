@@ -629,18 +629,6 @@ namespace Robust.Client.WebView.Cef
 
                 var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
 
-                // Rewrite http://127.0.0.1/... to res://127.0.0.1/... so it goes through
-                // the res:// scheme handler factory (CEF's network service handles http://
-                // before our ResourceRequestHandler can intercept it).
-                if (url.StartsWith("http://127.0.0.1/", StringComparison.Ordinal))
-                {
-                    var resUrl = "res://127.0.0.1" + url.Substring("http://127.0.0.1".Length);
-                    var utf8 = MarshalStringToUtf8(resUrl);
-                    NativeWebView.rnw_browser_load_url(self._browserHandle, (byte*)utf8);
-                    Marshal.FreeHGlobal(utf8);
-                    return 1; // cancel original navigation
-                }
-
                 var context = new NativeBeforeBrowseContext(url, isRedirect != 0, userGesture != 0);
 
                 lock (self._beforeBrowseHandlers)

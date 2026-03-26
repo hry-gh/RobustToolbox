@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use cef::*;
-use cef::rc::*;
 
 use crate::ffi_types::RnwBrowserCallbacks;
 
@@ -29,7 +28,6 @@ wrap_render_handler! {
             rect.y = 0;
             rect.width = w.max(1);
             rect.height = h.max(1);
-            eprintln!("[rnw] view_rect: {}x{}", rect.width, rect.height);
         }
 
         fn screen_info(
@@ -42,7 +40,6 @@ wrap_render_handler! {
             let mut scale: f32 = 1.0;
             unsafe { get_screen_info(self.data.callbacks.user_data, &mut scale) };
             screen_info.device_scale_factor = scale;
-            eprintln!("[rnw] screen_info: scale={scale}");
             1
         }
 
@@ -50,29 +47,17 @@ wrap_render_handler! {
             &self,
             _browser: Option<&mut Browser>,
             _type_: PaintElementType,
-            dirty_rects_count: usize,
-            dirty_rects: Option<&Rect>,
+            dirty_rects: Option<&[Rect]>,
             buffer: *const u8,
             width: ::std::os::raw::c_int,
             height: ::std::os::raw::c_int,
         ) {
-            eprintln!("[rnw] on_paint: {width}x{height}, {dirty_rects_count} dirty rects");
-            let Some(on_paint) = self.data.callbacks.on_paint else {
-                eprintln!("[rnw] on_paint: callback is None!");
-                return;
-            };
-            let Some(first_rect) = dirty_rects else {
-                eprintln!("[rnw] on_paint: dirty_rects is None!");
-                return;
-            };
+            let Some(on_paint) = self.data.callbacks.on_paint else { return };
+            let Some(rects) = dirty_rects else { return };
 
             // Pack dirty rects into flat i32 array: [x0, y0, w0, h0, x1, y1, w1, h1, ...]
-            let rects_slice = unsafe {
-                std::slice::from_raw_parts(first_rect as *const Rect, dirty_rects_count)
-            };
-
-            let mut flat_rects: Vec<i32> = Vec::with_capacity(dirty_rects_count * 4);
-            for r in rects_slice {
+            let mut flat_rects: Vec<i32> = Vec::with_capacity(rects.len() * 4);
+            for r in rects {
                 flat_rects.push(r.x);
                 flat_rects.push(r.y);
                 flat_rects.push(r.width);
@@ -85,7 +70,7 @@ wrap_render_handler! {
                     width,
                     height,
                     buffer,
-                    dirty_rects_count as i32,
+                    rects.len() as i32,
                     flat_rects.as_ptr(),
                 );
             }

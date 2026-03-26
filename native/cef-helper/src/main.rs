@@ -23,7 +23,7 @@ fn main() {
             assert!(loader.load());
             std::mem::forget(loader);
             // LibraryLoader handled loading, skip the manual load below
-            cef::api_hash(cef::sys::CEF_API_VERSION_14100, 0);
+            cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
 
             let args = cef::args::Args::new();
             let main_args = args.as_main_args();
@@ -38,7 +38,7 @@ fn main() {
         assert_eq!(result, 1, "Failed to load CEF framework");
     }
 
-    cef::api_hash(cef::sys::CEF_API_VERSION_14100, 0);
+    cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
 
     let args = cef::args::Args::new();
     let main_args = args.as_main_args();

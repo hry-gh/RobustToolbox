@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use cef::*;
-use cef::rc::*;
 use cef::string::CefStringUtf8;
 
 use crate::ffi_types::PendingResponse;

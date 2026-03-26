@@ -78,7 +78,7 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
         }
     }
 
-    cef::api_hash(cef::sys::CEF_API_VERSION_14100, 0);
+    cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
 
     let args = cef::args::Args::new();
 
@@ -168,12 +168,10 @@ pub unsafe extern "C" fn rnw_browser_create(
     callbacks: *const RnwBrowserCallbacks,
 ) -> u64 {
     if callbacks.is_null() {
-        eprintln!("[rnw] browser_create: callbacks is null");
         return 0;
     }
     let cbs = *callbacks;
     let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
-    eprintln!("[rnw] browser_create: url={url_str}");
 
     let data = Arc::new(CallbackData { callbacks: cbs });
     let mut cef_client = client::create_client(data);
@@ -204,11 +202,9 @@ pub unsafe extern "C" fn rnw_browser_create(
     match browser {
         Some(browser) => {
             let handle = with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0);
-            eprintln!("[rnw] browser_create: success, handle={handle}");
             handle
         }
         None => {
-            eprintln!("[rnw] browser_create: FAILED - browser_host_create_browser_sync returned None");
             0
         }
     }
@@ -256,8 +252,6 @@ pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_load_url(handle: u64, url: *const c_char) {
-    let url_dbg = cstr_to_string(url);
-    eprintln!("[rnw] load_url: handle={handle}, url={url_dbg:?}");
     let cef_url = cstr_to_cef_string(url);
     with_browser(handle, |entry| {
         if let Some(frame) = entry.browser.main_frame() {

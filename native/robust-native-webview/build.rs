@@ -13,7 +13,7 @@ fn main() {
         cc::Build::new()
             .include(cef_path)
             .cpp(true)
-            .flag("--std=c++17")
+            .flag("--std=c++20")
             .file("src/mac_application.mm")
             // Use macOS native ar to produce BSD-format archives.
             // GNU ar (e.g. from Homebrew binutils) produces archives

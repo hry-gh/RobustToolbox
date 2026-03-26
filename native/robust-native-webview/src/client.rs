@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use cef::*;
-use cef::rc::*;
 
 use crate::life_span_handler;
 use crate::load_handler;
@@ -15,7 +14,6 @@ wrap_client! {
 
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> {
-            eprintln!("[rnw] client: render_handler requested");
             Some(render_handler::create_render_handler(self.data.clone()))
         }
 

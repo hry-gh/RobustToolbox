@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use cef::*;
-use cef::rc::*;
 
 use crate::render_handler::CallbackData;
 
