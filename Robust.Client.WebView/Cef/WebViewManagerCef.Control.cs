@@ -465,6 +465,45 @@ namespace Robust.Client.WebView.Cef
                 Marshal.FreeHGlobal(utf8);
             }
 
+            /// <summary>
+            /// Try to handle a resource request via the per-control handlers.
+            /// Called from the global scheme handler callback.
+            /// </summary>
+            internal unsafe bool TryHandleResourceRequest(ulong requestId, string url, string method)
+            {
+                var context = new NativeRequestHandlerContext(url, method);
+
+                lock (_resourceRequestHandlers)
+                {
+                    foreach (var handler in _resourceRequestHandlers)
+                    {
+                        handler(context);
+
+                        if (context.IsCancelled)
+                            return false;
+
+                        if (context.ResponseData != null)
+                        {
+                            var data = context.ResponseData;
+                            var mimeUtf8 = MarshalStringToUtf8(data.MimeType);
+                            fixed (byte* dataPtr = data.Data)
+                            {
+                                NativeWebView.rnw_request_set_response(
+                                    requestId,
+                                    data.StatusCode,
+                                    (byte*)mimeUtf8,
+                                    dataPtr,
+                                    data.Data.Length);
+                            }
+                            Marshal.FreeHGlobal(mimeUtf8);
+                            return true;
+                        }
+                    }
+                }
+
+                return false;
+            }
+
             public void AddResourceRequestHandler(Action<IRequestHandlerContext> handler)
             {
                 lock (_resourceRequestHandlers) _resourceRequestHandlers.Add(handler);

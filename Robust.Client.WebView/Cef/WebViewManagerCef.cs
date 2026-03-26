@@ -31,9 +31,6 @@ namespace Robust.Client.WebView.Cef
 
         private ISawmill _sawmill = default!;
 
-        // Pinned callback for res:// scheme handler.
-        private GCHandle _resSchemeCallbackHandle;
-
         public unsafe void Initialize()
         {
             _sawmill = _logManager.GetSawmill("web.cef");
@@ -68,7 +65,6 @@ namespace Robust.Client.WebView.Cef
             var cachePath = FindAndLockCacheDirectory();
             var userAgentOverride = _cfg.GetCVar(WCVars.WebUserAgentOverride);
 
-            // Build settings and marshal strings to UTF-8
             var settings = new RnwSettings
             {
                 NoSandbox = 1,
@@ -99,7 +95,6 @@ namespace Robust.Client.WebView.Cef
             }
 
 #if MACOS
-            // On macOS, tell Rust where to find the CEF framework.
             var frameworkDirPath = PathHelpers.ExecutableRelativeFile(
                 "../Frameworks/Chromium Embedded Framework.framework");
             var frameworkPath = Path.Combine(frameworkDirPath, "Chromium Embedded Framework");
@@ -135,71 +130,92 @@ namespace Robust.Client.WebView.Cef
             // Register res:// scheme handler if enabled.
             if (_cfg.GetCVar(WCVars.WebResProtocol))
             {
-                RegisterResSchemeHandler();
+                RegisterSchemeHandler("res", "");
             }
+
+            // Register http://127.0.0.1 handler for local resource serving.
+            RegisterSchemeHandler("http", "127.0.0.1");
         }
 
-        private unsafe void RegisterResSchemeHandler()
+        private unsafe void RegisterSchemeHandler(string scheme, string domain)
         {
-            // We need a static callback that can be called from Rust.
-            // Use a function pointer to an unmanaged callback.
-            NativeWebView.rnw_register_res_scheme_handler(
-                &ResSchemeCallback,
+            var schemeUtf8 = MarshalStringToUtf8(scheme);
+            var domainUtf8 = MarshalStringToUtf8(domain);
+            NativeWebView.rnw_register_scheme_handler(
+                (byte*)schemeUtf8,
+                (byte*)domainUtf8,
+                &SchemeHandlerCallback,
                 null);
+            Marshal.FreeHGlobal(schemeUtf8);
+            Marshal.FreeHGlobal(domainUtf8);
         }
 
         [UnmanagedCallersOnly]
-        private static unsafe int ResSchemeCallback(void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
+        private static unsafe int SchemeHandlerCallback(void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
         {
-            // This is called from the Rust scheme handler.
-            // We need to resolve the resource and set the response.
             try
             {
                 var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
+                var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
                 var uri = new Uri(url);
-                var resPath = new ResPath(uri.AbsolutePath);
 
-                // Access the singleton instance. This is safe because this callback is only registered
-                // when the manager is initialized, and the manager outlives CEF.
                 var instance = IoCManager.Resolve<IWebViewManagerImpl>() as WebViewManagerCef;
                 if (instance == null)
                     return 0;
 
-                if (instance._resourceManager.TryContentFileRead(resPath, out var stream))
+                // First, try per-control resource request handlers (e.g. OpenDream's http://127.0.0.1 handler).
+                // Iterate over active controls and dispatch to their handlers.
+                foreach (var control in instance._activeControls)
                 {
-                    if (!instance.TryGetResourceMimeType(resPath.Extension, out var mime))
-                        mime = "application/octet-stream";
+                    var result = control.TryHandleResourceRequest(requestId, url, method);
+                    if (result)
+                        return 1;
+                }
 
-                    using (stream)
+                // Fall back to res:// resource handling.
+                if (uri.Scheme == "res")
+                {
+                    var resPath = new ResPath(uri.AbsolutePath);
+
+                    if (instance._resourceManager.TryContentFileRead(resPath, out var stream))
                     {
-                        using var ms = new MemoryStream();
-                        stream.CopyTo(ms);
-                        var data = ms.ToArray();
+                        if (!instance.TryGetResourceMimeType(resPath.Extension, out var mime))
+                            mime = "application/octet-stream";
 
-                        fixed (byte* dataPtr = data)
+                        using (stream)
                         {
-                            var mimeUtf8 = MarshalStringToUtf8(mime);
-                            NativeWebView.rnw_request_set_response(requestId, 200, (byte*)mimeUtf8, dataPtr, data.Length);
-                            Marshal.FreeHGlobal(mimeUtf8);
+                            using var ms = new MemoryStream();
+                            stream.CopyTo(ms);
+                            var data = ms.ToArray();
+
+                            fixed (byte* dataPtr = data)
+                            {
+                                var mimeUtf8 = MarshalStringToUtf8(mime);
+                                NativeWebView.rnw_request_set_response(requestId, 200, (byte*)mimeUtf8, dataPtr, data.Length);
+                                Marshal.FreeHGlobal(mimeUtf8);
+                            }
                         }
+
+                        return 1;
+                    }
+
+                    // Not found
+                    var notFoundBytes = Encoding.UTF8.GetBytes("Not found");
+                    fixed (byte* notFoundPtr = notFoundBytes)
+                    {
+                        var mimeUtf8 = MarshalStringToUtf8("text/plain");
+                        NativeWebView.rnw_request_set_response(requestId, 404, (byte*)mimeUtf8, notFoundPtr, notFoundBytes.Length);
+                        Marshal.FreeHGlobal(mimeUtf8);
                     }
 
                     return 1;
                 }
 
-                // Not found
-                var notFoundBytes = Encoding.UTF8.GetBytes("Not found");
-                fixed (byte* notFoundPtr = notFoundBytes)
-                {
-                    var mimeUtf8 = MarshalStringToUtf8("text/plain");
-                    NativeWebView.rnw_request_set_response(requestId, 404, (byte*)mimeUtf8, notFoundPtr, notFoundBytes.Length);
-                    Marshal.FreeHGlobal(mimeUtf8);
-                }
-
-                return 1;
+                return 0;
             }
-            catch
+            catch (Exception ex)
             {
+                System.Console.Error.WriteLine($"[rnw] SchemeHandlerCallback exception: {ex}");
                 return 0;
             }
         }

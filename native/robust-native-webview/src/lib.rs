@@ -168,10 +168,12 @@ pub unsafe extern "C" fn rnw_browser_create(
     callbacks: *const RnwBrowserCallbacks,
 ) -> u64 {
     if callbacks.is_null() {
+        eprintln!("[rnw] browser_create: callbacks is null");
         return 0;
     }
     let cbs = *callbacks;
     let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
+    eprintln!("[rnw] browser_create: url={url_str}");
 
     let data = Arc::new(CallbackData { callbacks: cbs });
     let mut cef_client = client::create_client(data);
@@ -200,8 +202,15 @@ pub unsafe extern "C" fn rnw_browser_create(
     );
 
     match browser {
-        Some(browser) => with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0),
-        None => 0,
+        Some(browser) => {
+            let handle = with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0);
+            eprintln!("[rnw] browser_create: success, handle={handle}");
+            handle
+        }
+        None => {
+            eprintln!("[rnw] browser_create: FAILED - browser_host_create_browser_sync returned None");
+            0
+        }
     }
 }
 
@@ -247,6 +256,8 @@ pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_load_url(handle: u64, url: *const c_char) {
+    let url_dbg = cstr_to_string(url);
+    eprintln!("[rnw] load_url: handle={handle}, url={url_dbg:?}");
     let cef_url = cstr_to_cef_string(url);
     with_browser(handle, |entry| {
         if let Some(frame) = entry.browser.main_frame() {
@@ -473,6 +484,31 @@ pub unsafe extern "C" fn rnw_register_res_scheme_handler(
     cef::register_scheme_handler_factory(
         Some(&CefString::from("res")),
         Some(&CefString::from("")),
+        Some(&mut factory),
+    );
+}
+
+/// Register a scheme handler factory for any scheme/domain combination.
+/// The callback is called synchronously for each request to that scheme+domain.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rnw_register_scheme_handler(
+    scheme: *const c_char,
+    domain: *const c_char,
+    callback: scheme_handler::ResSchemeCallback,
+    user_data: *mut std::os::raw::c_void,
+) {
+    let scheme_str = cstr_to_string(scheme).unwrap_or_default();
+    let domain_str = cstr_to_string(domain).unwrap_or_default();
+
+    let data = Arc::new(scheme_handler::SchemeCallbackData {
+        callback,
+        user_data,
+    });
+
+    let mut factory = scheme_handler::create_res_scheme_handler_factory(data);
+    cef::register_scheme_handler_factory(
+        Some(&CefString::from(scheme_str.as_str())),
+        Some(&CefString::from(domain_str.as_str())),
         Some(&mut factory),
     );
 }

@@ -33,6 +33,12 @@ wrap_app! {
                 Some(&"disable-features".into()),
                 Some(&"TouchpadAndWheelScrollLatching,AsyncWheelEvents".into()),
             );
+
+            // Use a mock keychain to avoid macOS Keychain access prompts.
+            cmd.append_switch(Some(&"--use-mock-keychain".into()));
+
+            // Disable all background networking (GCM, safe browsing, etc.)
+            cmd.append_switch(Some(&"--disable-background-networking".into()));
         }
 
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {

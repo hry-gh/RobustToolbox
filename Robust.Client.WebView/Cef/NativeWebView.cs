@@ -115,6 +115,13 @@ internal static unsafe partial class NativeWebView
         delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
         void* userData);
 
+    [LibraryImport(LibName)]
+    internal static partial void rnw_register_scheme_handler(
+        byte* scheme,
+        byte* domain,
+        delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
+        void* userData);
+
     // ========================================================================
     // Window Browser
     // ========================================================================

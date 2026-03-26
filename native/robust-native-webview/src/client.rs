@@ -15,6 +15,7 @@ wrap_client! {
 
     impl Client {
         fn render_handler(&self) -> Option<RenderHandler> {
+            eprintln!("[rnw] client: render_handler requested");
             Some(render_handler::create_render_handler(self.data.clone()))
         }
 

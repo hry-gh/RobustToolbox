@@ -23,27 +23,8 @@ wrap_request_handler! {
             user_gesture: ::std::os::raw::c_int,
             is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            let Some(cb) = self.data.callbacks.on_before_browse else { return 0 };
-            let Some(request) = request else { return 0 };
-
-            let url_userfree = request.url();
-            let url_str = {
-                let s = CefStringUtf16::from(&url_userfree);
-                CefStringUtf8::from(&s)
-            };
-            let url_cstr = match CString::new(url_str.as_str().unwrap_or("")) {
-                Ok(s) => s,
-                Err(_) => return 0,
-            };
-
-            unsafe {
-                cb(
-                    self.data.callbacks.user_data,
-                    url_cstr.as_ptr(),
-                    user_gesture,
-                    is_redirect,
-                )
-            }
+            // Temporarily disabled to debug resource_request_handler issue
+            0
         }
 
         fn resource_request_handler(
@@ -54,9 +35,12 @@ wrap_request_handler! {
             _is_navigation: ::std::os::raw::c_int,
             _is_download: ::std::os::raw::c_int,
             _request_initiator: Option<&CefString>,
-            _disable_default_handling: Option<&mut ::std::os::raw::c_int>,
+            disable_default_handling: Option<&mut ::std::os::raw::c_int>,
         ) -> Option<ResourceRequestHandler> {
-            let Some(cb) = self.data.callbacks.on_resource_request else { return None };
+            let Some(cb) = self.data.callbacks.on_resource_request else {
+                eprintln!("[rnw] resource_request_handler: callback is None");
+                return None;
+            };
             let Some(request) = request else { return None };
 
             let url_userfree = request.url();
@@ -85,6 +69,8 @@ wrap_request_handler! {
                 return None;
             }
 
+            eprintln!("[rnw] resource_request_handler: url={} is_nav={_is_navigation} is_dl={_is_download}", url_str.as_str().unwrap_or("?"));
+
             let handled = unsafe {
                 cb(
                     self.data.callbacks.user_data,
@@ -94,12 +80,20 @@ wrap_request_handler! {
                 )
             };
 
+            eprintln!("[rnw] resource_request_handler: handled={handled}");
+
             if handled != 0 {
                 // C# has called rnw_request_set_response before returning.
-                // Retrieve the response data.
+                // Retrieve the response data and store it for this request.
                 let response = state::with_state(|s| s.pending_responses.remove(&request_id));
+                eprintln!("[rnw] resource_request_handler: response present={}", response.as_ref().map(|r| r.is_some()).unwrap_or(false));
                 if let Some(Some(response)) = response {
-                    return Some(resource_handler::create_resource_request_handler(response));
+                    // Store the response in the per-browser pending data so the
+                    // ResourceRequestHandler can retrieve it.
+                    let handler = resource_handler::create_resource_request_handler_with_logging(response);
+                    let raw_ptr = ImplResourceRequestHandler::get_raw(&handler);
+                    eprintln!("[rnw] resource_request_handler: returning handler ptr={raw_ptr:?}");
+                    return Some(handler);
                 }
             }
 
