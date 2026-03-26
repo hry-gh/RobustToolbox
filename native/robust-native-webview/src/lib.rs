@@ -18,7 +18,9 @@ use std::sync::Arc;
 use cef::string::CefStringUtf8;
 use cef::*;
 
-use ffi_types::{PendingResponse, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings, RNW_ERROR, RNW_HANDLE_INVALID};
+use ffi_types::{
+    PendingResponse, RNW_ERROR, RNW_HANDLE_INVALID, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings,
+};
 use render_handler::CallbackData;
 use state::{GLOBAL, GlobalState, get_browser, with_state};
 
@@ -235,8 +237,12 @@ pub extern "C" fn rnw_browser_close(handle: u64) {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_len: i32) -> i32 {
-    let Some(browser) = get_browser(handle) else { return RNW_ERROR };
-    let Some(frame) = browser.main_frame() else { return RNW_ERROR };
+    let Some(browser) = get_browser(handle) else {
+        return RNW_ERROR;
+    };
+    let Some(frame) = browser.main_frame() else {
+        return RNW_ERROR;
+    };
     let url_userfree = frame.url();
     let url_utf16 = CefStringUtf16::from(&url_userfree);
     let url_utf8 = CefStringUtf8::from(&url_utf16);
@@ -557,7 +563,9 @@ pub unsafe extern "C" fn rnw_window_create(
     );
 
     match browser {
-        Some(browser) => with_state(|state| state.insert_browser(browser)).unwrap_or(RNW_HANDLE_INVALID),
+        Some(browser) => {
+            with_state(|state| state.insert_browser(browser)).unwrap_or(RNW_HANDLE_INVALID)
+        }
         None => RNW_HANDLE_INVALID,
     }
 }

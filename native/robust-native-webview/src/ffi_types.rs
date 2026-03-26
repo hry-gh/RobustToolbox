@@ -7,13 +7,13 @@ pub const RNW_ERROR: i32 = -1;
 #[repr(C)]
 pub struct RnwSettings {
     pub no_sandbox: i32,
-    pub subprocess_path: *const c_char,     // null on macOS
-    pub resources_dir_path: *const c_char,  // null on macOS
-    pub locales_dir_path: *const c_char,    // null on macOS
+    pub subprocess_path: *const c_char,
+    pub resources_dir_path: *const c_char,
+    pub locales_dir_path: *const c_char,
     pub remote_debugging_port: i32,
     pub cache_path: *const c_char,
-    pub user_agent: *const c_char,          // null if not overridden
-    pub cookieable_schemes: *const c_char,  // e.g. "usr,res"
+    pub user_agent: *const c_char,
+    pub cookieable_schemes: *const c_char,
     /// macOS only: path to the Chromium Embedded Framework dylib.
     /// If null, uses LibraryLoader with current_exe-relative path.
     pub framework_path: *const c_char,
@@ -52,11 +52,11 @@ pub struct RnwBrowserCallbacks {
         ),
     >,
 
-    pub get_view_rect:
-        Option<unsafe extern "C" fn(user_data: *mut c_void, out_width: *mut i32, out_height: *mut i32)>,
+    pub get_view_rect: Option<
+        unsafe extern "C" fn(user_data: *mut c_void, out_width: *mut i32, out_height: *mut i32),
+    >,
 
-    pub get_screen_info:
-        Option<unsafe extern "C" fn(user_data: *mut c_void, out_scale: *mut f32)>,
+    pub get_screen_info: Option<unsafe extern "C" fn(user_data: *mut c_void, out_scale: *mut f32)>,
 
     pub on_virtual_keyboard_requested:
         Option<unsafe extern "C" fn(user_data: *mut c_void, input_mode: i32)>,

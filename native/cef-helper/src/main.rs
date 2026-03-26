@@ -18,8 +18,9 @@ fn main() {
         };
 
         // Flat layout: exe is in bin/Content.Client/, framework at bin/Frameworks/
-        let flat_path = exe_dir
-            .join("../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework");
+        let flat_path = exe_dir.join(
+            "../Frameworks/Chromium Embedded Framework.framework/Chromium Embedded Framework",
+        );
 
         if flat_path.exists() {
             // Resolve and load the framework directly.
@@ -31,7 +32,10 @@ fn main() {
             };
             let result = unsafe { cef::load_library(Some(&*cstr.as_ptr().cast())) };
             if result != 1 {
-                eprintln!("cef-helper: failed to load CEF framework from {}", path.display());
+                eprintln!(
+                    "cef-helper: failed to load CEF framework from {}",
+                    path.display()
+                );
                 std::process::exit(1);
             }
         } else {

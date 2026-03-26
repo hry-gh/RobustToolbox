@@ -63,4 +63,3 @@ wrap_scheme_handler_factory! {
 pub fn create_res_scheme_handler_factory(data: Arc<SchemeCallbackData>) -> SchemeHandlerFactory {
     ResSchemeHandlerFactory::new(data)
 }
-
