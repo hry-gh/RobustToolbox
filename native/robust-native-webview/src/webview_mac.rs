@@ -9,7 +9,7 @@ use objc2::runtime::{AnyObject, Bool, NSObjectProtocol, ProtocolObject};
 use objc2::{define_class, msg_send, MainThreadOnly, DeclaredClass};
 use objc2_app_kit::{NSView, NSWindow};
 use objc2_foundation::{
-    NSData, NSError, NSHTTPURLResponse, NSObject, NSRect, NSPoint, NSSize, NSString, NSURL,
+    NSData, NSError, NSObject, NSRect, NSPoint, NSSize, NSString, NSURL,
     NSURLRequest, NSURLResponse,
 };
 use objc2_web_kit::{
@@ -65,12 +65,13 @@ define_class!(
             let Some(url_str) = url.absoluteString() else { return };
             let url_string = url_str.to_string();
 
-            // Prevent ARC from releasing the task while we wait for response
+            // Prevent ARC from releasing the task while we wait for response.
+            // We take an explicit retain here and balance it in respond_scheme
+            // via Retained::from_raw().
             let task_ptr = task as *const _ as *mut c_void;
-            unsafe {
-                let obj: *mut AnyObject = task_ptr as *mut AnyObject;
-                let _: *mut AnyObject = msg_send![obj, retain];
-            }
+            let task_obj = task_ptr as *mut AnyObject;
+            let _retained = Retained::retain(task_obj).unwrap();
+            std::mem::forget(_retained); // leak the retain count; respond_scheme will reclaim it
 
             let c_url = std::ffi::CString::new(url_string).unwrap();
             unsafe {
@@ -131,7 +132,7 @@ define_class!(
                 .map(|s| s.to_string())
                 .unwrap_or_default();
 
-            let c_url = std::ffi::CString::new(url_string.clone()).unwrap_or_default();
+            let c_url = std::ffi::CString::new(url_string).unwrap_or_default();
             let handle = self.ivars().handle.get();
             let cancel = unsafe {
                 callback(handle, c_url.as_ptr(), 0, user_data)
@@ -194,8 +195,8 @@ define_class!(
             let Some(callback) = self.ivars().callback.get() else { return };
 
             let body = message.body();
-            let body_desc: Option<Retained<NSString>> = unsafe { msg_send![&*body, description] };
-            let Some(body_str) = body_desc else { return };
+            let body_str: Option<Retained<NSString>> = unsafe { msg_send![&*body, description] };
+            let Some(body_str) = body_str else { return };
 
             let s = body_str.to_string();
             let c_str = std::ffi::CString::new(s).unwrap_or_default();
@@ -231,7 +232,6 @@ struct MacWebView {
 }
 
 // Can't put MainThreadOnly Retained in a Mutex, so store raw pointer.
-// Only accessed from main thread anyway.
 struct SendSchemePtr(*const SchemeHandler);
 unsafe impl Send for SendSchemePtr {}
 unsafe impl Sync for SendSchemePtr {}
@@ -283,7 +283,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
     unsafe {
         let parent: *mut NSWindow = parent_handle as *mut NSWindow;
-        let parent_retained: Retained<NSWindow> = Retained::retain(parent).unwrap();
+        let parent_retained = Retained::retain(parent).unwrap();
 
         let config = WKWebViewConfiguration::new(mtm);
 
@@ -300,12 +300,12 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
             }
         }
 
-        // Create webview
+        // Create webview with zero frame
         let frame = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(0.0, 0.0));
         let webview = WKWebView::initWithFrame_configuration(WKWebView::alloc(mtm), frame, &config);
 
         // Enable Safari Web Inspector
-        let _: () = msg_send![&*webview, setInspectable: Bool::YES];
+        webview.setInspectable(true);
 
         // Create delegates with placeholder handle
         let nav_delegate = NavigationDelegate::new(mtm, ptr::null_mut());
@@ -322,7 +322,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         content_controller.addScriptMessageHandler_name(protocol_msg, &NSString::from_str("robust"));
 
         // Add as subview
-        let content_view: Retained<NSView> = msg_send![parent, contentView];
+        let content_view = parent_retained.contentView().unwrap();
         content_view.addSubview(&webview);
 
         let instance = Box::new(MacWebView {
@@ -417,24 +417,25 @@ pub fn execute_js(handle: *mut c_void, code: *const c_char) {
 pub fn set_size(handle: *mut c_void, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<MacWebView>(handle);
-        let old_frame: NSRect = msg_send![&*instance.webview, frame];
+        let wv: &NSView = &instance.webview;
+        let old_frame = wv.frame();
         let frame = NSRect::new(old_frame.origin, NSSize::new(width as f64, height as f64));
-        let _: () = msg_send![&*instance.webview, setFrame: frame];
+        wv.setFrame(frame);
     }
 }
 
 pub fn set_bounds(handle: *mut c_void, x: c_int, y: c_int, width: c_int, height: c_int) {
     unsafe {
         let instance = from_handle::<MacWebView>(handle);
-        let content_view: Retained<NSView> = msg_send![&*instance.parent, contentView];
-        let parent_bounds: NSRect = msg_send![&*content_view, bounds];
-        let parent_height = parent_bounds.size.height;
+        let content_view = instance.parent.contentView().unwrap();
+        let parent_height = content_view.bounds().size.height;
 
         let frame = NSRect::new(
             NSPoint::new(x as f64, parent_height - y as f64 - height as f64),
             NSSize::new(width as f64, height as f64),
         );
-        let _: () = msg_send![&*instance.webview, setFrame: frame];
+        let wv: &NSView = &instance.webview;
+        wv.setFrame(frame);
     }
 }
 
@@ -491,27 +492,28 @@ pub fn respond_scheme(
         let request = task.request();
         let url = request.URL().unwrap();
 
+        // NSURLResponse is MainThreadOnly so we use msg_send for alloc/init
         let ns_mime = NSString::from_str(mime_str);
         let cls: &AnyObject = objc2::class!(NSURLResponse).as_ref();
         let alloc_obj: *mut AnyObject = msg_send![cls, alloc];
-        let response_ptr: *mut AnyObject = msg_send![
+        let response_obj: *mut AnyObject = msg_send![
             alloc_obj,
             initWithURL: &*url,
             MIMEType: &*ns_mime,
             expectedContentLength: length as isize,
             textEncodingName: ptr::null::<AnyObject>()
         ];
-        let response: &NSURLResponse = &*(response_ptr as *const NSURLResponse);
+        let response: &NSURLResponse = &*(response_obj as *const NSURLResponse);
 
         task.didReceiveResponse(response);
         task.didReceiveData(&response_data);
         task.didFinish();
 
-        let _: () = msg_send![response_ptr, release];
+        // Release the response (we own it from alloc/init)
+        let _ = Retained::from_raw(response_obj);
 
         // Balance the retain from start_url_scheme_task
-        let obj = request_handle as *mut AnyObject;
-        let _: () = msg_send![obj, release];
+        let _ = Retained::from_raw(request_handle as *mut AnyObject);
     }
 }
 

@@ -44,6 +44,7 @@ objc2-foundation = { workspace = true, features = [
     "NSValue",
     "NSGeometry",
     "NSThread",
+    "NSObject",
 ] }
 block2 = { workspace = true }
 

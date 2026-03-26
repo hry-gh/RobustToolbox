@@ -192,11 +192,9 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
         }
     };
 
-    // Fill parent window
+    // Start with zero bounds — C# will call set_bounds with correct position/size
     unsafe {
-        let mut bounds = RECT::default();
-        let _ = GetClientRect(parent, &mut bounds);
-        let _ = controller.SetBounds(bounds);
+        let _ = controller.SetBounds(RECT::default());
         let _ = controller.SetIsVisible(true);
     }
 
@@ -207,6 +205,9 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
             let _ = settings.SetAreDefaultContextMenusEnabled(true);
         }
     }
+
+    // Shared handle pointer — set after boxing, read by event closures
+    let shared_handle: Arc<Mutex<*mut c_void>> = Arc::new(Mutex::new(ptr::null_mut()));
 
     // Set up scheme handler for res://*
     if load_scheme_cb().is_some() {
@@ -247,6 +248,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
 
     // Before-browse handler
     if load_bb_cb().is_some() {
+        let handle_ref = shared_handle.clone();
         unsafe {
             let mut token = 0i64;
             let _ = webview.add_NavigationStarting(
@@ -267,8 +269,9 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
                         let mut is_redirected = BOOL(0);
                         let _ = args.IsRedirected(&mut is_redirected);
 
+                        let handle = *handle_ref.lock().unwrap();
                         let cancel = callback(
-                            ptr::null_mut(),
+                            handle,
                             c_uri.as_ptr(),
                             is_redirected.0 as c_int,
                             user_data,
@@ -293,6 +296,7 @@ pub fn create(parent_handle: *mut c_void, url: *const c_char) -> *mut c_void {
     });
 
     let handle = to_handle(instance);
+    *shared_handle.lock().unwrap() = handle;
 
     // Navigate to initial URL
     if !url.is_null() {
