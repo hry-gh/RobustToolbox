@@ -163,6 +163,8 @@ namespace Robust.Client.WebView.Cef
                 var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
                 var uri = new Uri(url);
 
+                System.Console.Error.WriteLine($"[rnw-cs] SchemeHandlerCallback: url={url} method={method}");
+
                 var instance = _instance;
                 if (instance == null)
                     return 0;
