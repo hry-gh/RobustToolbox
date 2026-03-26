@@ -31,9 +31,13 @@ namespace Robust.Client.WebView.Cef
 
         private ISawmill _sawmill = default!;
 
+        // Static reference for use from CEF thread callbacks where IoC is unavailable.
+        private static WebViewManagerCef? _instance;
+
         public unsafe void Initialize()
         {
             _sawmill = _logManager.GetSawmill("web.cef");
+            _instance = this;
 
             _consoleHost.RegisterCommand(
                 "flushcookies",
@@ -159,7 +163,7 @@ namespace Robust.Client.WebView.Cef
                 var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
                 var uri = new Uri(url);
 
-                var instance = IoCManager.Resolve<IWebViewManagerImpl>() as WebViewManagerCef;
+                var instance = _instance;
                 if (instance == null)
                     return 0;
 
