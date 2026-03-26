@@ -44,7 +44,10 @@ namespace Robust.Client.WebView.Cef
                 _localization.GetString("cmd-flushcookies-help"),
                 (_, _, _) => NativeWebView.rnw_flush_cookies());
 
-#if !MACOS
+#if MACOS
+            var subProcessPath = Path.Combine(BasePath, "cef-helper");
+            _sawmill.Debug($"Subprocess path: {subProcessPath}");
+#else
             string subProcessName;
             if (OperatingSystem.IsWindows())
                 subProcessName = "Robust.Client.WebView.exe";
@@ -72,12 +75,12 @@ namespace Robust.Client.WebView.Cef
                 RemoteDebuggingPort = remoteDebugPort,
             };
 
-#if !MACOS
             var subprocessPathUtf8 = MarshalStringToUtf8(subProcessPath);
+            settings.SubprocessPath = (byte*)subprocessPathUtf8;
+
+#if !MACOS
             var localesDirUtf8 = MarshalStringToUtf8(Path.Combine(cefResourcesPath, "locales"));
             var resourcesDirUtf8 = MarshalStringToUtf8(cefResourcesPath);
-
-            settings.SubprocessPath = (byte*)subprocessPathUtf8;
             settings.ResourcesDirPath = (byte*)resourcesDirUtf8;
             settings.LocalesDirPath = (byte*)localesDirUtf8;
 #endif
@@ -115,13 +118,12 @@ namespace Robust.Client.WebView.Cef
             _sawmill.Info($"CEF initialized via cef-rs, result: {result}");
 
             // Free marshalled strings
+            Marshal.FreeHGlobal(subprocessPathUtf8);
 #if MACOS
             Marshal.FreeHGlobal(frameworkPathUtf8);
             Marshal.FreeHGlobal(frameworkDirPathUtf8);
             Marshal.FreeHGlobal(mainBundlePathUtf8);
-#endif
-#if !MACOS
-            Marshal.FreeHGlobal(subprocessPathUtf8);
+#else
             Marshal.FreeHGlobal(resourcesDirUtf8);
             Marshal.FreeHGlobal(localesDirUtf8);
 #endif
