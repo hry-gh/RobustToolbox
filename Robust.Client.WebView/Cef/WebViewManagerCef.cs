@@ -163,12 +163,23 @@ namespace Robust.Client.WebView.Cef
                 if (instance == null)
                     return 0;
 
-                // First, try per-control resource request handlers (e.g. OpenDream's http://127.0.0.1 handler).
-                // Iterate over active controls and dispatch to their handlers.
+                // For res://127.0.0.1/... URLs (rewritten from http://127.0.0.1/... by on_before_browse),
+                // dispatch to per-control resource request handlers with the original http:// URL.
+                if (uri.Scheme == "res" && uri.Host == "127.0.0.1")
+                {
+                    var originalUrl = "http://127.0.0.1" + uri.PathAndQuery;
+                    foreach (var control in instance._activeControls)
+                    {
+                        if (control.TryHandleResourceRequest(requestId, originalUrl, method))
+                            return 1;
+                    }
+                    return 0;
+                }
+
+                // Try per-control handlers for other URLs.
                 foreach (var control in instance._activeControls)
                 {
-                    var result = control.TryHandleResourceRequest(requestId, url, method);
-                    if (result)
+                    if (control.TryHandleResourceRequest(requestId, url, method))
                         return 1;
                 }
 

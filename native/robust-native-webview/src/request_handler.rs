@@ -23,8 +23,25 @@ wrap_request_handler! {
             user_gesture: ::std::os::raw::c_int,
             is_redirect: ::std::os::raw::c_int,
         ) -> ::std::os::raw::c_int {
-            // Temporarily disabled to debug resource_request_handler issue
-            0
+            let Some(cb) = self.data.callbacks.on_before_browse else { return 0 };
+            let Some(request) = request else { return 0 };
+
+            let url_userfree = request.url();
+            let url_utf16 = CefStringUtf16::from(&url_userfree);
+            let url_str = CefStringUtf8::from(&url_utf16);
+            let url_cstr = match CString::new(url_str.as_str().unwrap_or("")) {
+                Ok(s) => s,
+                Err(_) => return 0,
+            };
+
+            unsafe {
+                cb(
+                    self.data.callbacks.user_data,
+                    url_cstr.as_ptr(),
+                    user_gesture,
+                    is_redirect,
+                )
+            }
         }
 
         fn resource_request_handler(
