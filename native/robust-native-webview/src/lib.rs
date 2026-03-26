@@ -15,12 +15,12 @@ use std::ffi::{CStr, c_char};
 use std::ptr;
 use std::sync::Arc;
 
-use cef::*;
 use cef::string::CefStringUtf8;
+use cef::*;
 
 use ffi_types::{PendingResponse, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings};
 use render_handler::CallbackData;
-use state::{GlobalState, GLOBAL, with_browser, with_state};
+use state::{GLOBAL, GlobalState, with_browser, with_state};
 
 // ============================================================================
 // Helpers
@@ -30,7 +30,10 @@ unsafe fn cstr_to_string(p: *const c_char) -> Option<String> {
     if p.is_null() {
         return None;
     }
-    unsafe { CStr::from_ptr(p) }.to_str().ok().map(|s| s.to_owned())
+    unsafe { CStr::from_ptr(p) }
+        .to_str()
+        .ok()
+        .map(|s| s.to_owned())
 }
 
 unsafe fn cstr_to_cef_string(p: *const c_char) -> CefString {
@@ -179,9 +182,7 @@ pub unsafe extern "C" fn rnw_browser_create(
     );
 
     match browser {
-        Some(browser) => {
-            with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0)
-        }
+        Some(browser) => with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0),
         None => 0,
     }
 }
@@ -202,11 +203,7 @@ pub extern "C" fn rnw_browser_close(handle: u64) {
 // ============================================================================
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rnw_browser_get_url(
-    handle: u64,
-    buf: *mut c_char,
-    buf_len: i32,
-) -> i32 {
+pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_len: i32) -> i32 {
     let url = with_browser(handle, |entry| {
         entry.browser.main_frame().map(|frame| {
             let url_userfree = frame.url();
@@ -511,9 +508,7 @@ pub unsafe extern "C" fn rnw_window_create(
     );
 
     match browser {
-        Some(browser) => {
-            with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0)
-        }
+        Some(browser) => with_state(|state| state.insert_browser(browser, cbs)).unwrap_or(0),
         None => 0,
     }
 }
