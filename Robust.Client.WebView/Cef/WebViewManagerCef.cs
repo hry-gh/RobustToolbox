@@ -158,34 +158,13 @@ namespace Robust.Client.WebView.Cef
             try
             {
                 var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
-                var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
                 var uri = new Uri(url);
 
                 var instance = _instance;
                 if (instance == null)
                     return 0;
 
-                // For res://127.0.0.1/... URLs (rewritten from http://127.0.0.1/... by on_before_browse),
-                // dispatch to per-control resource request handlers with the original http:// URL.
-                if (uri.Scheme == "res" && uri.Host == "127.0.0.1")
-                {
-                    var originalUrl = "http://127.0.0.1" + uri.PathAndQuery;
-                    foreach (var control in instance._activeControls)
-                    {
-                        if (control.TryHandleResourceRequest(requestId, originalUrl, method))
-                            return 1;
-                    }
-                    return 0;
-                }
-
-                // Try per-control handlers for other URLs.
-                foreach (var control in instance._activeControls)
-                {
-                    if (control.TryHandleResourceRequest(requestId, url, method))
-                        return 1;
-                }
-
-                // Fall back to res:// resource handling.
+                // Handle res:// resource loading.
                 if (uri.Scheme == "res")
                 {
                     var resPath = new ResPath(uri.AbsolutePath);
