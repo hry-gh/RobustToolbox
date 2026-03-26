@@ -52,7 +52,6 @@ namespace Robust.Client.WebView.Cef
 
             if (cefResourcesPath == null)
                 throw new InvalidOperationException("Unable to locate cef_resources directory!");
-#endif
 
             var remoteDebugPort = _cfg.GetCVar(WCVars.WebRemoteDebugPort);
             var cachePath = FindAndLockCacheDirectory();
