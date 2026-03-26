@@ -34,7 +34,7 @@ wrap_resource_handler! {
             response_length: Option<&mut i64>,
             _redirect_url: Option<&mut CefString>,
         ) {
-            let lock = self.state.lock().unwrap();
+            let Ok(lock) = self.state.lock() else { return };
             if let Some(response) = response {
                 response.set_status(lock.response.status_code);
                 response.set_mime_type(Some(&CefString::from(lock.response.mime_type.as_str())));
@@ -51,7 +51,10 @@ wrap_resource_handler! {
             bytes_read: Option<&mut ::std::os::raw::c_int>,
             _callback: Option<&mut ResourceReadCallback>,
         ) -> ::std::os::raw::c_int {
-            let mut lock = self.state.lock().unwrap();
+            let Ok(mut lock) = self.state.lock() else {
+                if let Some(br) = bytes_read { *br = 0; }
+                return 0;
+            };
             let remaining = lock.response.data.len() - lock.offset;
             if remaining == 0 {
                 if let Some(br) = bytes_read {
@@ -108,7 +111,7 @@ wrap_resource_request_handler! {
             _frame: Option<&mut Frame>,
             _request: Option<&mut Request>,
         ) -> Option<ResourceHandler> {
-            let response = self.response.lock().unwrap().take()?;
+            let response = self.response.lock().ok()?.take()?;
             Some(create_buffered_resource_handler(response))
         }
     }

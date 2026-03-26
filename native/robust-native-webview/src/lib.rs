@@ -60,20 +60,41 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
     #[cfg(target_os = "macos")]
     {
         if !s.framework_path.is_null() {
-            let path_str =
-                cstr_to_string(s.framework_path).expect("framework_path is not valid UTF-8");
+            let Some(path_str) = cstr_to_string(s.framework_path) else {
+                eprintln!("[rnw] framework_path is not valid UTF-8");
+                return RNW_ERROR;
+            };
             let path = std::path::PathBuf::from(path_str);
             use std::os::unix::ffi::OsStrExt;
-            let cstr = std::ffi::CString::new(path.as_os_str().as_bytes())
-                .expect("framework_path contains null bytes");
+            let Ok(cstr) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+                eprintln!("[rnw] framework_path contains null bytes");
+                return RNW_ERROR;
+            };
             let result = cef::load_library(Some(unsafe { &*cstr.as_ptr().cast() }));
-            assert_eq!(result, 1, "Failed to load CEF framework from provided path");
+            if result != 1 {
+                eprintln!("[rnw] Failed to load CEF framework from provided path");
+                return RNW_ERROR;
+            }
         } else {
-            let loader =
-                cef::library_loader::LibraryLoader::new(&std::env::current_exe().unwrap(), false);
-            assert!(loader.load());
-            // Intentionally leak: the library must stay loaded for the process lifetime.
+            let Ok(exe) = std::env::current_exe() else {
+                eprintln!("[rnw] Failed to get current exe path");
+                return RNW_ERROR;
+            };
+            let loader = cef::library_loader::LibraryLoader::new(&exe, false);
+            if !loader.load() {
+                eprintln!("[rnw] Failed to load CEF framework via LibraryLoader");
+                return RNW_ERROR;
+            }
             std::mem::forget(loader);
+        }
+
+        // Set DYLD_FALLBACK_LIBRARY_PATH so CEF subprocesses can find ANGLE libs
+        // (libGLESv2.dylib, libEGL.dylib) inside the framework bundle.
+        if !s.framework_dir_path.is_null() {
+            if let Some(fw_dir) = cstr_to_string(s.framework_dir_path) {
+                let libs_dir = std::path::PathBuf::from(&fw_dir).join("Libraries");
+                std::env::set_var("DYLD_FALLBACK_LIBRARY_PATH", &libs_dir);
+            }
         }
     }
 
@@ -124,8 +145,7 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
         ptr::null_mut(),
     );
 
-    {
-        let mut guard = GLOBAL.lock().unwrap();
+    if let Ok(mut guard) = GLOBAL.lock() {
         *guard = Some(GlobalState::new());
     }
 
@@ -139,8 +159,7 @@ pub extern "C" fn rnw_do_message_loop_work() {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_shutdown() {
-    {
-        let mut guard = GLOBAL.lock().unwrap();
+    if let Ok(mut guard) = GLOBAL.lock() {
         *guard = None;
     }
     cef::shutdown();

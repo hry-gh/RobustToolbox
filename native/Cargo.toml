@@ -3,8 +3,8 @@ resolver = "3"
 members = ["cef-helper", "robust-apphost", "robust-native-client", "robust-native-server", "robust-native-shared", "robust-native-webview"]
 
 [workspace.dependencies]
-cef = { git = "https://github.com/tauri-apps/cef-rs.git", default-features = false }
-cef-dll-sys = { git = "https://github.com/tauri-apps/cef-rs.git", default-features = false }
+cef = { version = "146.0.0+146.0.6", default-features = false }
+cef-dll-sys = { version = "146.0.0+146.0.6", default-features = false }
 objc2 = "0.6.3"
 objc2-app-kit = "0.3.2"
 cc = "1.0"

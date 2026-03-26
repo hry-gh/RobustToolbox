@@ -3,7 +3,7 @@
 
   <PropertyGroup>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <OutputType>WinExe</OutputType>
+    <OutputType>Library</OutputType>
     <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <CETCompat>false</CETCompat>
   </PropertyGroup>

@@ -9,6 +9,8 @@ crate-type = ["cdylib"]
 [dependencies]
 cef = { workspace = true, default-features = false }
 cef-dll-sys = { workspace = true, default-features = false }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 objc2.workspace = true
 objc2-app-kit.workspace = true
 
