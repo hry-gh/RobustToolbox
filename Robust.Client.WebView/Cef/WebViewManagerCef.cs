@@ -62,9 +62,9 @@ namespace Robust.Client.WebView.Cef
                 LocalesDirPath = Path.Combine(BasePath, "locales"),
 #else
                 FrameworkDirPath = Path.Combine(BasePath,
-                    "Frameworks", "Chromium Embedded Framework.framework"),
+                    "..", "Frameworks", "Chromium Embedded Framework.framework"),
                 FrameworkPath = Path.Combine(BasePath,
-                    "Frameworks", "Chromium Embedded Framework.framework",
+                    "..", "Frameworks", "Chromium Embedded Framework.framework",
                     "Chromium Embedded Framework"),
                 MainBundlePath = Path.Combine(BasePath, "..", ".."),
 #endif
