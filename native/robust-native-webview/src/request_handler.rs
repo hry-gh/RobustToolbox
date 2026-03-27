@@ -60,7 +60,6 @@ wrap_request_handler! {
             let handled = unsafe {
                 cb(
                     self.data.callbacks.user_data,
-                    0,
                     url_cstr.as_ptr(),
                     method_cstr.as_ptr(),
                 )
@@ -74,6 +73,12 @@ wrap_request_handler! {
                     }
                     return Some(resource_handler::create_resource_request_handler(response));
                 }
+                // C# returned handled=1 but didn't call rnw_request_set_response.
+                // This is a bug in the C# handler - log it so it's debuggable.
+                eprintln!(
+                    "[rnw] WARNING: on_resource_request returned handled=1 but no response was set for: {}",
+                    url_cstr.to_string_lossy()
+                );
             }
 
             None

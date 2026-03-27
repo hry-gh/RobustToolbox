@@ -606,7 +606,7 @@ namespace Robust.Client.WebView.Cef
 
             [UnmanagedCallersOnly]
             private static unsafe int OnResourceRequestCallback(
-                void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
+                void* userData, byte* urlPtr, byte* methodPtr)
             {
                 var self = Resolve(userData);
                 if (self == null) return 0;
@@ -636,7 +636,6 @@ namespace Robust.Client.WebView.Cef
                             fixed (byte* dataPtr = data.Data)
                             {
                                 NativeWebView.rnw_request_set_response(
-                                    requestId,
                                     data.StatusCode,
                                     data.MimeType,
                                     dataPtr,

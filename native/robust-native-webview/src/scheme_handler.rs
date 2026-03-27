@@ -8,7 +8,6 @@ use crate::{cef_userfree_to_cstring, resource_handler, state};
 /// Called synchronously; C# must call rnw_request_set_response before returning.
 pub type ResSchemeCallback = unsafe extern "C" fn(
     user_data: *mut c_void,
-    request_id: u64,
     url: *const std::ffi::c_char,
     method: *const std::ffi::c_char,
 ) -> i32;
@@ -42,7 +41,6 @@ wrap_scheme_handler_factory! {
             let handled = unsafe {
                 (self.data.callback)(
                     self.data.user_data,
-                    0,
                     url_cstr.as_ptr(),
                     method_cstr.as_ptr(),
                 )
@@ -53,6 +51,11 @@ wrap_scheme_handler_factory! {
                 if let Some(response) = response {
                     return Some(resource_handler::create_buffered_resource_handler(response));
                 }
+                // C# returned handled=1 but didn't call rnw_request_set_response.
+                eprintln!(
+                    "[rnw] WARNING: scheme handler returned handled=1 but no response was set for: {}",
+                    url_cstr.to_string_lossy()
+                );
             }
 
             None

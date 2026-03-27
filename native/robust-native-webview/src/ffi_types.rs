@@ -76,7 +76,6 @@ pub struct RnwBrowserCallbacks {
     pub on_resource_request: Option<
         unsafe extern "C" fn(
             user_data: *mut c_void,
-            request_id: u64,
             url: *const c_char,
             method: *const c_char,
         ) -> i32,

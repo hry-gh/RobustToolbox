@@ -105,7 +105,7 @@ internal static unsafe partial class NativeWebView
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void rnw_request_set_response(
-        ulong requestId, int statusCode, string mimeType, byte* data, int dataLen);
+        int statusCode, string mimeType, byte* data, int dataLen);
 
     // ========================================================================
     // Scheme Handler Registration
@@ -113,14 +113,14 @@ internal static unsafe partial class NativeWebView
 
     [LibraryImport(LibName)]
     internal static partial void rnw_register_res_scheme_handler(
-        delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
+        delegate* unmanaged<void*, byte*, byte*, int> callback,
         void* userData);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void rnw_register_scheme_handler(
         string scheme,
         string domain,
-        delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
+        delegate* unmanaged<void*, byte*, byte*, int> callback,
         void* userData);
 
     // ========================================================================
@@ -234,7 +234,7 @@ internal unsafe struct RnwBrowserCallbacks
     public delegate* unmanaged<void*, float*, void> GetScreenInfo;
     public delegate* unmanaged<void*, int, void> OnVirtualKeyboardRequested;
     public delegate* unmanaged<void*, byte*, int, int, int> OnBeforeBrowse;
-    public delegate* unmanaged<void*, ulong, byte*, byte*, int> OnResourceRequest;
+    public delegate* unmanaged<void*, byte*, byte*, int> OnResourceRequest;
     public delegate* unmanaged<void*, void> OnLoadStart;
     public delegate* unmanaged<void*, int, void> OnLoadEnd;
     public delegate* unmanaged<void*, void> OnBeforeClose;

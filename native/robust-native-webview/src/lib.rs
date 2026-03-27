@@ -1,5 +1,3 @@
-#![allow(unsafe_op_in_unsafe_fn)]
-
 mod app;
 mod client;
 mod ffi_types;
@@ -92,11 +90,11 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
 
         // Set DYLD_FALLBACK_LIBRARY_PATH so CEF subprocesses can find ANGLE libs
         // (libGLESv2.dylib, libEGL.dylib) inside the framework bundle.
-        if !s.framework_dir_path.is_null() {
-            if let Some(fw_dir) = cstr_to_string(s.framework_dir_path) {
-                let libs_dir = std::path::PathBuf::from(&fw_dir).join("Libraries");
-                std::env::set_var("DYLD_FALLBACK_LIBRARY_PATH", &libs_dir);
-            }
+        if !s.framework_dir_path.is_null()
+            && let Some(fw_dir) = unsafe { cstr_to_string(s.framework_dir_path) }
+        {
+            let libs_dir = std::path::PathBuf::from(&fw_dir).join("Libraries");
+            unsafe { std::env::set_var("DYLD_FALLBACK_LIBRARY_PATH", &libs_dir) };
         }
     }
 
@@ -447,9 +445,9 @@ pub extern "C" fn rnw_browser_notify_move_or_resize_started(handle: u64) {
 // --- Resource Request Response ---
 
 /// Called by C# from within an on_resource_request callback to set the response data.
+/// Must be called synchronously before returning from the callback.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_request_set_response(
-    _request_id: u64,
     status_code: i32,
     mime_type: *const c_char,
     data: *const u8,
