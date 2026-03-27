@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace Robust.Client.WebView.Cef;
@@ -30,9 +31,9 @@ internal static unsafe partial class NativeWebView
     // Browser Management
     // ========================================================================
 
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial ulong rnw_browser_create(
-        byte* url,
+        string url,
         int width,
         int height,
         RnwBrowserCallbacks* callbacks);
@@ -43,11 +44,11 @@ internal static unsafe partial class NativeWebView
     [LibraryImport(LibName)]
     internal static partial int rnw_browser_get_url(ulong handle, byte* buf, int bufLen);
 
-    [LibraryImport(LibName)]
-    internal static partial void rnw_browser_load_url(ulong handle, byte* url);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void rnw_browser_load_url(ulong handle, string url);
 
-    [LibraryImport(LibName)]
-    internal static partial void rnw_browser_execute_js(ulong handle, byte* code);
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
+    internal static partial void rnw_browser_execute_js(ulong handle, string code);
 
     [LibraryImport(LibName)]
     internal static partial int rnw_browser_is_loading(ulong handle);
@@ -102,9 +103,9 @@ internal static unsafe partial class NativeWebView
     // Resource Request Response
     // ========================================================================
 
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void rnw_request_set_response(
-        ulong requestId, int statusCode, byte* mimeType, byte* data, int dataLen);
+        ulong requestId, int statusCode, string mimeType, byte* data, int dataLen);
 
     // ========================================================================
     // Scheme Handler Registration
@@ -115,10 +116,10 @@ internal static unsafe partial class NativeWebView
         delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
         void* userData);
 
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void rnw_register_scheme_handler(
-        byte* scheme,
-        byte* domain,
+        string scheme,
+        string domain,
         delegate* unmanaged<void*, ulong, byte*, byte*, int> callback,
         void* userData);
 
@@ -126,9 +127,9 @@ internal static unsafe partial class NativeWebView
     // Window Browser
     // ========================================================================
 
-    [LibraryImport(LibName)]
+    [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial ulong rnw_window_create(
-        byte* url,
+        string url,
         int width,
         int height,
         RnwBrowserCallbacks* callbacks);
@@ -158,6 +159,56 @@ internal unsafe struct RnwSettings
     public byte* FrameworkDirPath;
     /// macOS only: path to the main app bundle.
     public byte* MainBundlePath;
+}
+
+/// <summary>
+/// Disposable builder for RnwSettings that manages string lifetime.
+/// All strings are freed when the builder is disposed.
+/// </summary>
+internal unsafe struct RnwSettingsBuilder : IDisposable
+{
+    public RnwSettings Settings;
+    private List<IntPtr>? _allocations;
+
+    public int NoSandbox { set => Settings.NoSandbox = value; }
+    public int RemoteDebuggingPort { set => Settings.RemoteDebuggingPort = value; }
+
+    public string? SubprocessPath { set => Settings.SubprocessPath = AllocUtf8(value); }
+    public string? ResourcesDirPath { set => Settings.ResourcesDirPath = AllocUtf8(value); }
+    public string? LocalesDirPath { set => Settings.LocalesDirPath = AllocUtf8(value); }
+    public string? CachePath { set => Settings.CachePath = AllocUtf8(value); }
+    public string? UserAgent { set => Settings.UserAgent = AllocUtf8(value); }
+    public string? CookieableSchemes { set => Settings.CookieableSchemes = AllocUtf8(value); }
+    public string? FrameworkPath { set => Settings.FrameworkPath = AllocUtf8(value); }
+    public string? FrameworkDirPath { set => Settings.FrameworkDirPath = AllocUtf8(value); }
+    public string? MainBundlePath { set => Settings.MainBundlePath = AllocUtf8(value); }
+
+    private byte* AllocUtf8(string? s)
+    {
+        if (s == null)
+            return null;
+
+        var bytes = System.Text.Encoding.UTF8.GetBytes(s);
+        var ptr = Marshal.AllocHGlobal(bytes.Length + 1);
+        Marshal.Copy(bytes, 0, ptr, bytes.Length);
+        Marshal.WriteByte(ptr, bytes.Length, 0);
+
+        _allocations ??= [];
+        _allocations.Add(ptr);
+
+        return (byte*)ptr;
+    }
+
+    public void Dispose()
+    {
+        if (_allocations == null)
+            return;
+
+        foreach (var ptr in _allocations)
+            Marshal.FreeHGlobal(ptr);
+
+        _allocations = null;
+    }
 }
 
 [StructLayout(LayoutKind.Sequential)]

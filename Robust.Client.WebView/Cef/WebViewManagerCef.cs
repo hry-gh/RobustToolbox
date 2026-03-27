@@ -1,7 +1,5 @@
 using System;
-using System.Collections.Generic;
 using System.IO;
-using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -49,92 +47,46 @@ namespace Robust.Client.WebView.Cef
             var subProcessPath = Path.Combine(BasePath, subProcessName);
             _sawmill.Debug($"Subprocess path: {subProcessPath}");
 
-            var remoteDebugPort = _cfg.GetCVar(WCVars.WebRemoteDebugPort);
-            var cachePath = FindAndLockCacheDirectory();
             var userAgentOverride = _cfg.GetCVar(WCVars.WebUserAgentOverride);
 
-            var settings = new RnwSettings
+            using var builder = new RnwSettingsBuilder
             {
                 NoSandbox = 1,
-                RemoteDebuggingPort = remoteDebugPort,
+                RemoteDebuggingPort = _cfg.GetCVar(WCVars.WebRemoteDebugPort),
+                SubprocessPath = subProcessPath,
+                CachePath = FindAndLockCacheDirectory(),
+                CookieableSchemes = "usr,res",
+                UserAgent = string.IsNullOrEmpty(userAgentOverride) ? null : userAgentOverride,
+#if !MACOS
+                ResourcesDirPath = BasePath,
+                LocalesDirPath = Path.Combine(BasePath, "locales"),
+#else
+                FrameworkDirPath = PathHelpers.ExecutableRelativeFile(
+                    "../Frameworks/Chromium Embedded Framework.framework"),
+                FrameworkPath = Path.Combine(
+                    PathHelpers.ExecutableRelativeFile("../Frameworks/Chromium Embedded Framework.framework"),
+                    "Chromium Embedded Framework"),
+                MainBundlePath = PathHelpers.ExecutableRelativeFile("../.."),
+#endif
             };
 
-            var subprocessPathUtf8 = MarshalStringToUtf8(subProcessPath);
-            settings.SubprocessPath = (byte*)subprocessPathUtf8;
-
-#if !MACOS
-            // CEF resources (icudtl.dat, *.pak, locales/) are expected alongside the executable.
-            var localesDirUtf8 = MarshalStringToUtf8(Path.Combine(BasePath, "locales"));
-            var resourcesDirUtf8 = MarshalStringToUtf8(BasePath);
-            settings.ResourcesDirPath = (byte*)resourcesDirUtf8;
-            settings.LocalesDirPath = (byte*)localesDirUtf8;
-#endif
-
-            var cachePathUtf8 = MarshalStringToUtf8(cachePath);
-            settings.CachePath = (byte*)cachePathUtf8;
-
-            var cookieSchemesUtf8 = MarshalStringToUtf8("usr,res");
-            settings.CookieableSchemes = (byte*)cookieSchemesUtf8;
-
-            IntPtr userAgentUtf8 = IntPtr.Zero;
-            if (!string.IsNullOrEmpty(userAgentOverride))
-            {
-                userAgentUtf8 = MarshalStringToUtf8(userAgentOverride);
-                settings.UserAgent = (byte*)userAgentUtf8;
-            }
-
-#if MACOS
-            var frameworkDirPath = PathHelpers.ExecutableRelativeFile(
-                "../Frameworks/Chromium Embedded Framework.framework");
-            var frameworkPath = Path.Combine(frameworkDirPath, "Chromium Embedded Framework");
-            var mainBundlePath = PathHelpers.ExecutableRelativeFile("../..");
-
-            var frameworkPathUtf8 = MarshalStringToUtf8(frameworkPath);
-            var frameworkDirPathUtf8 = MarshalStringToUtf8(frameworkDirPath);
-            var mainBundlePathUtf8 = MarshalStringToUtf8(mainBundlePath);
-
-            settings.FrameworkPath = (byte*)frameworkPathUtf8;
-            settings.FrameworkDirPath = (byte*)frameworkDirPathUtf8;
-            settings.MainBundlePath = (byte*)mainBundlePathUtf8;
-#endif
-
-            var result = NativeWebView.rnw_initialize(&settings);
+            var result = NativeWebView.rnw_initialize(&builder.Settings);
             _sawmill.Info($"CEF initialized via cef-rs, result: {result}");
-
-            // Free marshalled strings
-            Marshal.FreeHGlobal(subprocessPathUtf8);
-#if MACOS
-            Marshal.FreeHGlobal(frameworkPathUtf8);
-            Marshal.FreeHGlobal(frameworkDirPathUtf8);
-            Marshal.FreeHGlobal(mainBundlePathUtf8);
-#else
-            Marshal.FreeHGlobal(resourcesDirUtf8);
-            Marshal.FreeHGlobal(localesDirUtf8);
-#endif
-            Marshal.FreeHGlobal(cachePathUtf8);
-            Marshal.FreeHGlobal(cookieSchemesUtf8);
-            if (userAgentUtf8 != IntPtr.Zero)
-                Marshal.FreeHGlobal(userAgentUtf8);
 
             // Register res:// scheme handler if enabled.
             if (_cfg.GetCVar(WCVars.WebResProtocol))
             {
                 RegisterSchemeHandler("res", "");
             }
-
         }
 
         private unsafe void RegisterSchemeHandler(string scheme, string domain)
         {
-            var schemeUtf8 = MarshalStringToUtf8(scheme);
-            var domainUtf8 = MarshalStringToUtf8(domain);
             NativeWebView.rnw_register_scheme_handler(
-                (byte*)schemeUtf8,
-                (byte*)domainUtf8,
+                scheme,
+                domain,
                 &SchemeHandlerCallback,
                 null);
-            Marshal.FreeHGlobal(schemeUtf8);
-            Marshal.FreeHGlobal(domainUtf8);
         }
 
         [UnmanagedCallersOnly]
@@ -167,9 +119,7 @@ namespace Robust.Client.WebView.Cef
 
                             fixed (byte* dataPtr = data)
                             {
-                                var mimeUtf8 = MarshalStringToUtf8(mime);
-                                NativeWebView.rnw_request_set_response(requestId, 200, (byte*)mimeUtf8, dataPtr, data.Length);
-                                Marshal.FreeHGlobal(mimeUtf8);
+                                NativeWebView.rnw_request_set_response(requestId, 200, mime, dataPtr, data.Length);
                             }
                         }
 
@@ -180,9 +130,7 @@ namespace Robust.Client.WebView.Cef
                     var notFoundBytes = Encoding.UTF8.GetBytes("Not found");
                     fixed (byte* notFoundPtr = notFoundBytes)
                     {
-                        var mimeUtf8 = MarshalStringToUtf8("text/plain");
-                        NativeWebView.rnw_request_set_response(requestId, 404, (byte*)mimeUtf8, notFoundPtr, notFoundBytes.Length);
-                        Marshal.FreeHGlobal(mimeUtf8);
+                        NativeWebView.rnw_request_set_response(requestId, 404, "text/plain", notFoundPtr, notFoundBytes.Length);
                     }
 
                     return 1;
@@ -215,19 +163,6 @@ namespace Robust.Client.WebView.Cef
             }
 
             NativeWebView.rnw_shutdown();
-        }
-
-        /// <summary>
-        /// Marshal a .NET string to a null-terminated UTF-8 byte buffer allocated with Marshal.AllocHGlobal.
-        /// Caller must free with Marshal.FreeHGlobal.
-        /// </summary>
-        internal static IntPtr MarshalStringToUtf8(string s)
-        {
-            var bytes = Encoding.UTF8.GetBytes(s);
-            var ptr = Marshal.AllocHGlobal(bytes.Length + 1);
-            Marshal.Copy(bytes, 0, ptr, bytes.Length);
-            Marshal.WriteByte(ptr, bytes.Length, 0); // null terminator
-            return ptr;
         }
     }
 }

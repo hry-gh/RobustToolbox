@@ -31,13 +31,11 @@ namespace Robust.Client.WebView.Cef
                 // Render callbacks not needed for windowed browsers.
             };
 
-            var urlUtf8 = MarshalStringToUtf8(createParams.Url);
             var handle = NativeWebView.rnw_window_create(
-                (byte*)urlUtf8,
+                createParams.Url,
                 createParams.Width,
                 createParams.Height,
                 &callbacks);
-            Marshal.FreeHGlobal(urlUtf8);
 
             impl.BrowserHandle = handle;
             impl.GcHandle = gcHandle;
@@ -92,9 +90,7 @@ namespace Robust.Client.WebView.Cef
                 set
                 {
                     CheckClosed();
-                    var utf8 = MarshalStringToUtf8(value);
-                    NativeWebView.rnw_browser_load_url(BrowserHandle, (byte*)utf8);
-                    Marshal.FreeHGlobal(utf8);
+                    NativeWebView.rnw_browser_load_url(BrowserHandle, value);
                 }
             }
 
@@ -143,12 +139,10 @@ namespace Robust.Client.WebView.Cef
                 return true;
             }
 
-            public unsafe void ExecuteJavaScript(string code)
+            public void ExecuteJavaScript(string code)
             {
                 CheckClosed();
-                var utf8 = MarshalStringToUtf8(code);
-                NativeWebView.rnw_browser_execute_js(BrowserHandle, (byte*)utf8);
-                Marshal.FreeHGlobal(utf8);
+                NativeWebView.rnw_browser_execute_js(BrowserHandle, code);
             }
 
             public void AddResourceRequestHandler(Action<IRequestHandlerContext> handler)

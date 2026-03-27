@@ -142,6 +142,16 @@ namespace Robust.Client.WebView.Cef
             private const uint EVENTFLAG_MIDDLE_MOUSE_BUTTON = 1 << 7;
             private const uint EVENTFLAG_RIGHT_MOUSE_BUTTON = 1 << 8;
 
+            // Key event types matching CEF's cef_key_event_type_t
+            private const int KEYEVENT_RAWKEYDOWN = 0;
+            private const int KEYEVENT_KEYUP = 1;
+            private const int KEYEVENT_CHAR = 2;
+
+            // Mouse button types matching CEF's cef_mouse_button_type_t
+            private const int MBT_LEFT = 0;
+            private const int MBT_MIDDLE = 1;
+            private const int MBT_RIGHT = 2;
+
             [Dependency] private readonly IClyde _clyde = default!;
             [Dependency] private readonly IInputManager _inputMgr = default!;
 
@@ -149,7 +159,6 @@ namespace Robust.Client.WebView.Cef
             public readonly WebViewControl Owner;
             private readonly ShaderInstance _shaderInstance;
 
-            // Handler dispatch lists (no longer using CefGlue types).
             private readonly List<Action<IRequestHandlerContext>> _resourceRequestHandlers = new();
             private readonly List<Action<IBeforeBrowseContext>> _beforeBrowseHandlers = new();
 
@@ -191,9 +200,7 @@ namespace Robust.Client.WebView.Cef
                         return;
                     }
 
-                    var utf8 = MarshalStringToUtf8(value);
-                    NativeWebView.rnw_browser_load_url(_browserHandle, (byte*)utf8);
-                    Marshal.FreeHGlobal(utf8);
+                    NativeWebView.rnw_browser_load_url(_browserHandle, value);
                 }
             }
 
@@ -202,7 +209,8 @@ namespace Robust.Client.WebView.Cef
 
             public unsafe void StartBrowser()
             {
-                DebugTools.Assert(_browserHandle == 0);
+                if (_browserHandle != 0)
+                    throw new InvalidOperationException("Browser already started");
 
                 // Pin ourselves so the GC doesn't move us while callbacks are active.
                 _callbackGcHandle = GCHandle.Alloc(this);
@@ -221,13 +229,11 @@ namespace Robust.Client.WebView.Cef
                     OnBeforeClose = null,
                 };
 
-                var urlUtf8 = MarshalStringToUtf8(_startUrl);
                 _browserHandle = NativeWebView.rnw_browser_create(
-                    (byte*)urlUtf8,
+                    _startUrl,
                     Math.Max(Owner.PixelWidth, 1),
                     Math.Max(Owner.PixelHeight, 1),
                     &callbacks);
-                Marshal.FreeHGlobal(urlUtf8);
 
                 var texture = _clyde.CreateBlankTexture<Rgba32>(Vector2i.One);
                 _data = new LiveData(texture);
@@ -289,10 +295,10 @@ namespace Robust.Client.WebView.Cef
                 {
                     var button = guiRawEvent.Key switch
                     {
-                        Key.MouseLeft => 0,   // MBT_LEFT
-                        Key.MouseMiddle => 1,  // MBT_MIDDLE
-                        Key.MouseRight => 2,   // MBT_RIGHT
-                        _ => 0
+                        Key.MouseLeft => MBT_LEFT,
+                        Key.MouseMiddle => MBT_MIDDLE,
+                        Key.MouseRight => MBT_RIGHT,
+                        _ => MBT_LEFT
                     };
 
                     NativeWebView.rnw_browser_send_mouse_click(
@@ -318,11 +324,11 @@ namespace Robust.Client.WebView.Cef
 #else
                     var lParam = guiRawEvent.RawCode;
 #endif
-                    var modifiers = CalcModifiers(guiRawEvent.Key);
+                    var modifiers = CalcKeyboardModifiers();
 
                     var keyEvent = new RnwKeyEvent
                     {
-                        EventType = guiRawEvent.Action == RawKeyAction.Up ? 1 : 0, // 0=RawKeyDown, 1=KeyUp
+                        EventType = guiRawEvent.Action == RawKeyAction.Up ? KEYEVENT_KEYUP : KEYEVENT_RAWKEYDOWN,
                         NativeKeyCode = lParam,
                         WindowsKeyCode = (int)vkKey,
                         IsSystemKey = 0,
@@ -335,7 +341,7 @@ namespace Robust.Client.WebView.Cef
                     {
                         var charEvent = new RnwKeyEvent
                         {
-                            EventType = 2, // Char
+                            EventType = KEYEVENT_CHAR,
                             WindowsKeyCode = '\b',
                             NativeKeyCode = lParam,
                             Modifiers = modifiers,
@@ -348,7 +354,7 @@ namespace Robust.Client.WebView.Cef
                 return true;
             }
 
-            private uint CalcModifiers(Key key)
+            private uint CalcKeyboardModifiers()
             {
                 uint modifiers = EVENTFLAG_NONE;
                 if (_inputMgr.IsKeyDown(Key.Control))
@@ -362,13 +368,7 @@ namespace Robust.Client.WebView.Cef
 
             private uint CalcMouseModifiers()
             {
-                uint modifiers = EVENTFLAG_NONE;
-                if (_inputMgr.IsKeyDown(Key.Control))
-                    modifiers |= EVENTFLAG_CONTROL_DOWN;
-                if (_inputMgr.IsKeyDown(Key.Alt))
-                    modifiers |= EVENTFLAG_ALT_DOWN;
-                if (_inputMgr.IsKeyDown(Key.Shift))
-                    modifiers |= EVENTFLAG_SHIFT_DOWN;
+                var modifiers = CalcKeyboardModifiers();
                 if (_inputMgr.IsKeyDown(Key.MouseLeft))
                     modifiers |= EVENTFLAG_LEFT_MOUSE_BUTTON;
                 if (_inputMgr.IsKeyDown(Key.MouseMiddle))
@@ -386,7 +386,7 @@ namespace Robust.Client.WebView.Cef
                 {
                     var charEvent = new RnwKeyEvent
                     {
-                        EventType = 2, // Char
+                        EventType = KEYEVENT_CHAR,
                         WindowsKeyCode = chr,
                         Character = chr,
                         UnmodifiedCharacter = chr,
@@ -458,12 +458,10 @@ namespace Robust.Client.WebView.Cef
                 return true;
             }
 
-            public unsafe void ExecuteJavaScript(string code)
+            public void ExecuteJavaScript(string code)
             {
                 if (_browserHandle == 0) throw new InvalidOperationException();
-                var utf8 = MarshalStringToUtf8(code);
-                NativeWebView.rnw_browser_execute_js(_browserHandle, (byte*)utf8);
-                Marshal.FreeHGlobal(utf8);
+                NativeWebView.rnw_browser_execute_js(_browserHandle, code);
             }
 
             public void AddResourceRequestHandler(Action<IRequestHandlerContext> handler)
@@ -635,17 +633,15 @@ namespace Robust.Client.WebView.Cef
                         {
                             // Set the response via the FFI
                             var data = context.ResponseData;
-                            var mimeUtf8 = MarshalStringToUtf8(data.MimeType);
                             fixed (byte* dataPtr = data.Data)
                             {
                                 NativeWebView.rnw_request_set_response(
                                     requestId,
                                     data.StatusCode,
-                                    (byte*)mimeUtf8,
+                                    data.MimeType,
                                     dataPtr,
                                     data.Data.Length);
                             }
-                            Marshal.FreeHGlobal(mimeUtf8);
                             return 1;
                         }
                     }
