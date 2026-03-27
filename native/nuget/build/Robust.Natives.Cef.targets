@@ -41,5 +41,8 @@
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\librobust_native_webview.dylib"
           CopyToOutputDirectory="PreserveNewest"
           Link="librobust_native_webview.dylib" />
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Chromium Embedded Framework.framework\Libraries\*"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>
