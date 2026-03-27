@@ -1,6 +1,7 @@
 use std::ptr;
 
 use cef::{App, ImplApp, ImplSchemeRegistrar, SchemeRegistrar, WrapApp, rc::Rc, wrap_app};
+use robust_native_shared::cef_schemes::CUSTOM_SCHEMES;
 
 fn main() {
     #[cfg(target_os = "macos")]
@@ -45,6 +46,8 @@ fn main() {
                 eprintln!("cef-helper: LibraryLoader failed to load CEF framework");
                 std::process::exit(1);
             }
+            // SAFETY: The loader must outlive the CEF subprocess. We intentionally leak it
+            // rather than dropping, which would unload the framework.
             std::mem::forget(loader);
         }
     }
@@ -60,18 +63,15 @@ fn main() {
     std::process::exit(ret)
 }
 
-const SCHEME_STANDARD: i32 = 1 << 0;
-const SCHEME_SECURE: i32 = 1 << 3;
-
 wrap_app! {
     struct HelperApp;
 
     impl App {
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
             let Some(registrar) = registrar else { return };
-            // NOTE: KEEP IN SYNC WITH robust-native-webview app.rs!
-            registrar.add_custom_scheme(Some(&"usr".into()), SCHEME_SECURE | SCHEME_STANDARD);
-            registrar.add_custom_scheme(Some(&"res".into()), SCHEME_SECURE | SCHEME_STANDARD);
+            for (scheme, flags) in CUSTOM_SCHEMES {
+                registrar.add_custom_scheme(Some(&(*scheme).into()), *flags);
+            }
         }
     }
 }

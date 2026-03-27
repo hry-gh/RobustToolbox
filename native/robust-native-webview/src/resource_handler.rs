@@ -3,11 +3,24 @@ use std::sync::Mutex;
 
 use cef::*;
 
-use crate::ffi_types::PendingResponse;
+use crate::ffi_types::ResponseContext;
 
 struct ResponseState {
-    response: PendingResponse,
+    status_code: i32,
+    mime_type: String,
+    data: Vec<u8>,
     offset: usize,
+}
+
+impl From<ResponseContext> for ResponseState {
+    fn from(ctx: ResponseContext) -> Self {
+        Self {
+            status_code: ctx.status_code,
+            mime_type: ctx.mime_type,
+            data: ctx.data,
+            offset: 0,
+        }
+    }
 }
 
 wrap_resource_handler! {
@@ -36,11 +49,11 @@ wrap_resource_handler! {
         ) {
             let Ok(lock) = self.state.lock() else { return };
             if let Some(response) = response {
-                response.set_status(lock.response.status_code);
-                response.set_mime_type(Some(&CefString::from(lock.response.mime_type.as_str())));
+                response.set_status(lock.status_code);
+                response.set_mime_type(Some(&CefString::from(lock.mime_type.as_str())));
             }
             if let Some(len) = response_length {
-                *len = lock.response.data.len() as i64;
+                *len = lock.data.len() as i64;
             }
         }
 
@@ -55,7 +68,7 @@ wrap_resource_handler! {
                 if let Some(br) = bytes_read { *br = 0; }
                 return 0;
             };
-            let remaining = lock.response.data.len() - lock.offset;
+            let remaining = lock.data.len() - lock.offset;
             if remaining == 0 {
                 if let Some(br) = bytes_read {
                     *br = 0;
@@ -66,7 +79,7 @@ wrap_resource_handler! {
             let to_read = (bytes_to_read as usize).min(remaining);
             unsafe {
                 std::ptr::copy_nonoverlapping(
-                    lock.response.data.as_ptr().add(lock.offset),
+                    lock.data.as_ptr().add(lock.offset),
                     data_out,
                     to_read,
                 );
@@ -81,17 +94,14 @@ wrap_resource_handler! {
     }
 }
 
-pub fn create_buffered_resource_handler(response: PendingResponse) -> ResourceHandler {
-    let state = Arc::new(Mutex::new(ResponseState {
-        response,
-        offset: 0,
-    }));
+pub fn create_buffered_resource_handler(response: ResponseContext) -> ResourceHandler {
+    let state = Arc::new(Mutex::new(ResponseState::from(response)));
     BufferedResourceHandler::new(state)
 }
 
 wrap_resource_request_handler! {
     struct BufferedResourceRequestHandler {
-        response: Arc<Mutex<Option<PendingResponse>>>,
+        response: Arc<Mutex<Option<ResponseContext>>>,
     }
 
     impl ResourceRequestHandler {
@@ -153,7 +163,7 @@ wrap_cookie_access_filter! {
     }
 }
 
-pub fn create_resource_request_handler(response: PendingResponse) -> ResourceRequestHandler {
+pub fn create_resource_request_handler(response: ResponseContext) -> ResourceRequestHandler {
     let response = Arc::new(Mutex::new(Some(response)));
     BufferedResourceRequestHandler::new(response)
 }

@@ -28,7 +28,6 @@ namespace Robust.Client.WebView.Cef
                 OnBeforeBrowse = &WindowOnBeforeBrowseCallback,
                 OnResourceRequest = &WindowOnResourceRequestCallback,
                 OnBeforeClose = &WindowOnBeforeCloseCallback,
-                // Render callbacks not needed for windowed browsers.
             };
 
             var handle = NativeWebView.rnw_window_create(
@@ -48,7 +47,6 @@ namespace Robust.Client.WebView.Cef
         private static unsafe int WindowOnBeforeBrowseCallback(
             void* userData, byte* urlPtr, int userGesture, int isRedirect)
         {
-            // Windows don't currently use before-browse handlers.
             return 0;
         }
 
@@ -56,18 +54,50 @@ namespace Robust.Client.WebView.Cef
         private static unsafe int WindowOnResourceRequestCallback(
             void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
         {
-            // Windows don't currently use resource request handlers.
+            var impl = ResolveWindow(userData);
+            if (impl == null) return 0;
+
+            var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
+            var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
+
+            var context = new NativeRequestHandlerContext(url, method);
+
+            lock (impl._resourceRequestHandlers)
+            {
+                foreach (var handler in impl._resourceRequestHandlers)
+                {
+                    handler(context);
+
+                    if (context.IsCancelled)
+                        return 0;
+
+                    if (context.ResponseData != null)
+                    {
+                        var data = context.ResponseData;
+                        NativeWebView.rnw_request_set_response(
+                            requestId,
+                            data.StatusCode,
+                            data.MimeType,
+                            data.Data);
+                        return 1;
+                    }
+                }
+            }
+
             return 0;
         }
 
         [UnmanagedCallersOnly]
         private static unsafe void WindowOnBeforeCloseCallback(void* userData)
         {
+            var impl = ResolveWindow(userData);
+            impl?.OnClose();
+        }
+
+        private static unsafe WebViewWindowImpl? ResolveWindow(void* userData)
+        {
             var handle = GCHandle.FromIntPtr((IntPtr)userData);
-            if (handle.Target is WebViewWindowImpl impl)
-            {
-                impl.OnClose();
-            }
+            return handle.Target as WebViewWindowImpl;
         }
 
         private sealed class WebViewWindowImpl : IWebViewWindow
@@ -75,6 +105,7 @@ namespace Robust.Client.WebView.Cef
             private readonly WebViewManagerCef _manager;
             internal ulong BrowserHandle;
             internal GCHandle GcHandle;
+            internal readonly List<Action<IRequestHandlerContext>> _resourceRequestHandlers = new();
 
             [ViewVariables(VVAccess.ReadWrite)]
             public unsafe string Url
@@ -147,11 +178,18 @@ namespace Robust.Client.WebView.Cef
 
             public void AddResourceRequestHandler(Action<IRequestHandlerContext> handler)
             {
-                // TODO: implement for window browsers if needed
+                lock (_resourceRequestHandlers)
+                {
+                    _resourceRequestHandlers.Add(handler);
+                }
             }
 
             public void RemoveResourceRequestHandler(Action<IRequestHandlerContext> handler)
             {
+                lock (_resourceRequestHandlers)
+                {
+                    _resourceRequestHandlers.Remove(handler);
+                }
             }
 
             public void Dispose()

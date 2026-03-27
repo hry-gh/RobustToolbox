@@ -1,7 +1,5 @@
 use cef::*;
-
-const SCHEME_STANDARD: i32 = 1 << 0;
-const SCHEME_SECURE: i32 = 1 << 3;
+use robust_native_shared::cef_schemes::CUSTOM_SCHEMES;
 
 wrap_app! {
     struct RobustApp;
@@ -31,9 +29,9 @@ wrap_app! {
 
         fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
             let Some(registrar) = registrar else { return };
-            // NOTE: KEEP IN SYNC WITH cef-helper CODE!
-            registrar.add_custom_scheme(Some(&"usr".into()), SCHEME_SECURE | SCHEME_STANDARD);
-            registrar.add_custom_scheme(Some(&"res".into()), SCHEME_SECURE | SCHEME_STANDARD);
+            for (scheme, flags) in CUSTOM_SCHEMES {
+                registrar.add_custom_scheme(Some(&(*scheme).into()), *flags);
+            }
         }
     }
 }

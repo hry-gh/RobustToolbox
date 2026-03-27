@@ -160,6 +160,7 @@ name = "cef-helper"
 version = "0.1.0"
 dependencies = [
  "cef",
+ "robust-native-shared",
 ]
 
 [[package]]
@@ -975,6 +976,7 @@ dependencies = [
  "cef-dll-sys",
  "objc2",
  "objc2-app-kit",
+ "robust-native-shared",
 ]
 
 [[package]]

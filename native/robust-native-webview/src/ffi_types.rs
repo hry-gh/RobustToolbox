@@ -35,6 +35,27 @@ pub struct RnwKeyEvent {
     pub is_system_key: i32,
 }
 
+/// Response context passed to resource request callbacks.
+/// C# writes the response data here via `rnw_response_write`.
+#[repr(C)]
+pub struct ResponseContext {
+    pub status_code: i32,
+    pub mime_type: String,
+    pub data: Vec<u8>,
+    pub was_set: bool,
+}
+
+impl ResponseContext {
+    pub fn new() -> Self {
+        Self {
+            status_code: 0,
+            mime_type: String::new(),
+            data: Vec::new(),
+            was_set: false,
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct RnwBrowserCallbacks {
@@ -71,13 +92,15 @@ pub struct RnwBrowserCallbacks {
         ) -> i32,
     >,
 
-    /// Return 1 if handled (caller must call rnw_request_set_response before returning),
-    /// 0 to let CEF handle it.
+    /// Resource request callback. Return 1 if handled, 0 to let CEF handle it.
+    /// If returning 1, must write response data via `rnw_response_write` using
+    /// the provided `response_ctx` pointer.
     pub on_resource_request: Option<
         unsafe extern "C" fn(
             user_data: *mut c_void,
             url: *const c_char,
             method: *const c_char,
+            response_ctx: *mut ResponseContext,
         ) -> i32,
     >,
 
@@ -90,10 +113,3 @@ pub struct RnwBrowserCallbacks {
 // The C# side is responsible for thread safety of the user_data.
 unsafe impl Send for RnwBrowserCallbacks {}
 unsafe impl Sync for RnwBrowserCallbacks {}
-
-/// Set by C# before returning from on_resource_request.
-pub struct PendingResponse {
-    pub status_code: i32,
-    pub mime_type: String,
-    pub data: Vec<u8>,
-}

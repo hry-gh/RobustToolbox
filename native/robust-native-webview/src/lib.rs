@@ -17,7 +17,7 @@ use cef::string::CefStringUtf8;
 use cef::*;
 
 use ffi_types::{
-    PendingResponse, RNW_ERROR, RNW_HANDLE_INVALID, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings,
+    RNW_ERROR, RNW_HANDLE_INVALID, ResponseContext, RnwBrowserCallbacks, RnwKeyEvent, RnwSettings,
 };
 use render_handler::CallbackData;
 use state::{GLOBAL, GlobalState, get_browser, with_state};
@@ -85,6 +85,8 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
                 eprintln!("[rnw] Failed to load CEF framework via LibraryLoader");
                 return RNW_ERROR;
             }
+            // SAFETY: The loader must outlive the CEF process. We intentionally leak it
+            // rather than dropping, which would unload the framework while CEF is running.
             std::mem::forget(loader);
         }
 
@@ -177,8 +179,6 @@ pub extern "C" fn rnw_flush_cookies() {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_create(
     url: *const c_char,
-    _width: i32,
-    _height: i32,
     callbacks: *const RnwBrowserCallbacks,
 ) -> u64 {
     if callbacks.is_null() {
@@ -444,29 +444,32 @@ pub extern "C" fn rnw_browser_notify_move_or_resize_started(handle: u64) {
 
 // --- Resource Request Response ---
 
-/// Called by C# from within an on_resource_request callback to set the response data.
-/// Must be called synchronously before returning from the callback.
+/// Write response data to a response context.
+/// Called by C# from within an on_resource_request callback.
+/// The `ctx` pointer is provided by Rust and remains valid for the duration of the callback.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn rnw_request_set_response(
+pub unsafe extern "C" fn rnw_response_write(
+    ctx: *mut ResponseContext,
     status_code: i32,
     mime_type: *const c_char,
     data: *const u8,
     data_len: i32,
 ) {
-    let mime = cstr_to_string(mime_type).unwrap_or_else(|| "application/octet-stream".to_string());
-    let data_vec = if !data.is_null() && data_len > 0 {
-        std::slice::from_raw_parts(data, data_len as usize).to_vec()
+    if ctx.is_null() {
+        eprintln!("[rnw] rnw_response_write called with null context");
+        return;
+    }
+
+    let ctx = unsafe { &mut *ctx };
+    ctx.status_code = status_code;
+    ctx.mime_type =
+        cstr_to_string(mime_type).unwrap_or_else(|| "application/octet-stream".to_string());
+    ctx.data = if !data.is_null() && data_len > 0 {
+        unsafe { std::slice::from_raw_parts(data, data_len as usize).to_vec() }
     } else {
         Vec::new()
     };
-
-    state::PENDING_RESPONSE.with(|cell| {
-        *cell.borrow_mut() = Some(PendingResponse {
-            status_code,
-            mime_type: mime,
-            data: data_vec,
-        });
-    });
+    ctx.was_set = true;
 }
 
 // --- Scheme Handler Registration ---

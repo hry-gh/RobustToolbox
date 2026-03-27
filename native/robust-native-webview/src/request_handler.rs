@@ -3,9 +3,9 @@ use std::sync::Arc;
 use cef::*;
 
 use crate::cef_userfree_to_cstring;
+use crate::ffi_types::ResponseContext;
 use crate::render_handler::CallbackData;
 use crate::resource_handler;
-use crate::state;
 
 wrap_request_handler! {
     struct RobustRequestHandler {
@@ -28,15 +28,15 @@ wrap_request_handler! {
                 return 0;
             };
 
-            let result = unsafe {
+
+            unsafe {
                 cb(
                     self.data.callbacks.user_data,
                     url_cstr.as_ptr(),
                     user_gesture,
                     is_redirect,
                 )
-            };
-            result
+            }
         }
 
         fn resource_request_handler(
@@ -49,32 +49,39 @@ wrap_request_handler! {
             _request_initiator: Option<&CefString>,
             disable_default_handling: Option<&mut ::std::os::raw::c_int>,
         ) -> Option<ResourceRequestHandler> {
-            let Some(cb) = self.data.callbacks.on_resource_request else {
-                return None;
-            };
-            let Some(request) = request else { return None };
+            let cb = self.data.callbacks.on_resource_request?;
+            let request = request?;
 
             let url_cstr = cef_userfree_to_cstring(&request.url(), "")?;
+
+            // Deny file:// access.
+            if url_cstr.to_bytes().starts_with(b"file://") {
+                if let Some(ddh) = disable_default_handling {
+                    *ddh = 1;
+                }
+                return None;
+            }
             let method_cstr = cef_userfree_to_cstring(&request.method(), "GET")?;
+
+            let mut response_ctx = ResponseContext::new();
 
             let handled = unsafe {
                 cb(
                     self.data.callbacks.user_data,
                     url_cstr.as_ptr(),
                     method_cstr.as_ptr(),
+                    &mut response_ctx,
                 )
             };
 
             if handled != 0 {
-                let response = state::PENDING_RESPONSE.with(|cell| cell.borrow_mut().take());
-                if let Some(response) = response {
+                if response_ctx.was_set {
                     if let Some(ddh) = disable_default_handling {
                         *ddh = 1;
                     }
-                    return Some(resource_handler::create_resource_request_handler(response));
+                    return Some(resource_handler::create_resource_request_handler(response_ctx));
                 }
-                // C# returned handled=1 but didn't call rnw_request_set_response.
-                // This is a bug in the C# handler - log it so it's debuggable.
+                // C# returned handled=1 but didn't write a response.
                 eprintln!(
                     "[rnw] WARNING: on_resource_request returned handled=1 but no response was set for: {}",
                     url_cstr.to_string_lossy()

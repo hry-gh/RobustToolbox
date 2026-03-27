@@ -1,10 +1,7 @@
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use cef::Browser;
-
-use crate::ffi_types::PendingResponse;
 
 pub struct GlobalState {
     pub browsers: HashMap<u64, Browser>,
@@ -28,11 +25,6 @@ impl GlobalState {
 }
 
 pub static GLOBAL: Mutex<Option<GlobalState>> = Mutex::new(None);
-
-// Thread-local slot for passing a response from C# back to the calling Rust code.
-thread_local! {
-    pub static PENDING_RESPONSE: RefCell<Option<PendingResponse>> = const { RefCell::new(None) };
-}
 
 pub fn with_state<F, R>(f: F) -> Option<R>
 where

@@ -34,8 +34,6 @@ internal static unsafe partial class NativeWebView
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial ulong rnw_browser_create(
         string url,
-        int width,
-        int height,
         RnwBrowserCallbacks* callbacks);
 
     [LibraryImport(LibName)]
@@ -103,9 +101,12 @@ internal static unsafe partial class NativeWebView
     // Resource Request Response
     // ========================================================================
 
+    /// <summary>
+    /// Write response data to a response context provided by a resource request callback.
+    /// </summary>
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
-    internal static partial void rnw_request_set_response(
-        int statusCode, string mimeType, byte* data, int dataLen);
+    internal static partial void rnw_response_write(
+        ResponseContext* ctx, int statusCode, string mimeType, byte* data, int dataLen);
 
     // ========================================================================
     // Scheme Handler Registration
@@ -113,14 +114,14 @@ internal static unsafe partial class NativeWebView
 
     [LibraryImport(LibName)]
     internal static partial void rnw_register_res_scheme_handler(
-        delegate* unmanaged<void*, byte*, byte*, int> callback,
+        delegate* unmanaged<void*, byte*, byte*, ResponseContext*, int> callback,
         void* userData);
 
     [LibraryImport(LibName, StringMarshalling = StringMarshalling.Utf8)]
     internal static partial void rnw_register_scheme_handler(
         string scheme,
         string domain,
-        delegate* unmanaged<void*, byte*, byte*, int> callback,
+        delegate* unmanaged<void*, byte*, byte*, ResponseContext*, int> callback,
         void* userData);
 
     // ========================================================================
@@ -224,6 +225,22 @@ internal struct RnwKeyEvent
     public int IsSystemKey;
 }
 
+/// <summary>
+/// Response context passed to resource request callbacks.
+/// Rust creates this on the stack and passes a pointer to C#.
+/// C# writes response data via <see cref="NativeWebView.rnw_response_write"/>.
+/// </summary>
+/// <remarks>
+/// This struct mirrors the Rust ResponseContext. The fields are managed by Rust;
+/// C# should only interact via rnw_response_write, not by writing fields directly.
+/// </remarks>
+[StructLayout(LayoutKind.Sequential)]
+internal struct ResponseContext
+{
+    // Note: These fields exist for ABI compatibility but are not accessed directly from C#.
+    // C# uses rnw_response_write() to set the response.
+}
+
 [StructLayout(LayoutKind.Sequential)]
 internal unsafe struct RnwBrowserCallbacks
 {
@@ -234,7 +251,11 @@ internal unsafe struct RnwBrowserCallbacks
     public delegate* unmanaged<void*, float*, void> GetScreenInfo;
     public delegate* unmanaged<void*, int, void> OnVirtualKeyboardRequested;
     public delegate* unmanaged<void*, byte*, int, int, int> OnBeforeBrowse;
-    public delegate* unmanaged<void*, byte*, byte*, int> OnResourceRequest;
+    /// <summary>
+    /// Resource request callback. Receives url, method, and a response context pointer.
+    /// Return 1 if handled (must write response via rnw_response_write), 0 to let CEF handle.
+    /// </summary>
+    public delegate* unmanaged<void*, byte*, byte*, ResponseContext*, int> OnResourceRequest;
     public delegate* unmanaged<void*, void> OnLoadStart;
     public delegate* unmanaged<void*, int, void> OnLoadEnd;
     public delegate* unmanaged<void*, void> OnBeforeClose;

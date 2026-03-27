@@ -231,8 +231,6 @@ namespace Robust.Client.WebView.Cef
 
                 _browserHandle = NativeWebView.rnw_browser_create(
                     _startUrl,
-                    Math.Max(Owner.PixelWidth, 1),
-                    Math.Max(Owner.PixelHeight, 1),
                     &callbacks);
 
                 var texture = _clyde.CreateBlankTexture<Rgba32>(Vector2i.One);
@@ -606,17 +604,14 @@ namespace Robust.Client.WebView.Cef
 
             [UnmanagedCallersOnly]
             private static unsafe int OnResourceRequestCallback(
-                void* userData, byte* urlPtr, byte* methodPtr)
+                void* userData, byte* urlPtr, byte* methodPtr, ResponseContext* responseCtx)
             {
                 var self = Resolve(userData);
                 if (self == null) return 0;
 
+                // file:// denial is handled in Rust.
                 var url = Marshal.PtrToStringUTF8((IntPtr)urlPtr) ?? "";
                 var method = Marshal.PtrToStringUTF8((IntPtr)methodPtr) ?? "GET";
-
-                // Deny file:// access
-                if (url.StartsWith("file://", StringComparison.OrdinalIgnoreCase))
-                    return 0;
 
                 var context = new NativeRequestHandlerContext(url, method);
 
@@ -631,11 +626,12 @@ namespace Robust.Client.WebView.Cef
 
                         if (context.ResponseData != null)
                         {
-                            // Set the response via the FFI
+                            // Write response via the context pointer
                             var data = context.ResponseData;
                             fixed (byte* dataPtr = data.Data)
                             {
-                                NativeWebView.rnw_request_set_response(
+                                NativeWebView.rnw_response_write(
+                                    responseCtx,
                                     data.StatusCode,
                                     data.MimeType,
                                     dataPtr,

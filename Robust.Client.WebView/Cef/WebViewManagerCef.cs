@@ -90,7 +90,8 @@ namespace Robust.Client.WebView.Cef
         }
 
         [UnmanagedCallersOnly]
-        private static unsafe int SchemeHandlerCallback(void* userData, byte* urlPtr, byte* methodPtr)
+        private static unsafe int SchemeHandlerCallback(
+            void* userData, byte* urlPtr, byte* methodPtr, ResponseContext* responseCtx)
         {
             try
             {
@@ -116,10 +117,9 @@ namespace Robust.Client.WebView.Cef
                             using var ms = new MemoryStream();
                             stream.CopyTo(ms);
                             var data = ms.ToArray();
-
                             fixed (byte* dataPtr = data)
                             {
-                                NativeWebView.rnw_request_set_response(200, mime, dataPtr, data.Length);
+                                NativeWebView.rnw_response_write(responseCtx, 200, mime, dataPtr, data.Length);
                             }
                         }
 
@@ -130,7 +130,7 @@ namespace Robust.Client.WebView.Cef
                     var notFoundBytes = Encoding.UTF8.GetBytes("Not found");
                     fixed (byte* notFoundPtr = notFoundBytes)
                     {
-                        NativeWebView.rnw_request_set_response(404, "text/plain", notFoundPtr, notFoundBytes.Length);
+                        NativeWebView.rnw_response_write(responseCtx, 404, "text/plain", notFoundPtr, notFoundBytes.Length);
                     }
 
                     return 1;
