@@ -86,6 +86,15 @@ CEF_FILES_LINUX = [
 ]
 
 
+def _copy_en_locale(cef_dir: Path, out_dir: Path):
+    locale_src = cef_dir / "locales" / "en-US.pak"
+    if locale_src.exists():
+        locale_dst = out_dir / "locales"
+        locale_dst.mkdir(exist_ok=True)
+        shutil.copy2(locale_src, locale_dst / "en-US.pak")
+        print("  Copied locales/en-US.pak")
+
+
 def find_cef_dir(target_dir: Path, cef_platform: str) -> Path | None:
     """Find the CEF directory in cargo's build output."""
     build_dir = target_dir / "build"
@@ -162,12 +171,15 @@ def collect_runtime(rid: str, info: dict, skip_build: bool):
         return
 
     if rid.startswith("osx"):
-        # macOS: copy the entire framework bundle
         fw_src = cef_dir / "Chromium Embedded Framework.framework"
         fw_dst = out_dir / "Chromium Embedded Framework.framework"
         if fw_src.exists():
-            shutil.copytree(fw_src, fw_dst, symlinks=True)
-            print(f"  Copied Chromium Embedded Framework.framework")
+            shutil.copytree(fw_src, fw_dst, symlinks=True,
+                            ignore=shutil.ignore_patterns("*.lproj"))
+            en_lproj = fw_src / "Resources" / "en.lproj"
+            if en_lproj.exists():
+                shutil.copytree(en_lproj, fw_dst / "Resources" / "en.lproj", symlinks=True)
+            print("  Copied Chromium Embedded Framework.framework (en locale only)")
 
             # Copy ANGLE/Vulkan libs flat alongside the executable so CEF subprocesses can find them
             for lib in ["libEGL.dylib", "libGLESv2.dylib", "libvk_swiftshader.dylib", "vk_swiftshader_icd.json"]:
@@ -184,11 +196,7 @@ def collect_runtime(rid: str, info: dict, skip_build: bool):
                 shutil.copy2(src, out_dir / f)
             else:
                 print(f"  WARNING: {f} not found in CEF dir")
-        # Copy locales directory
-        locales_src = cef_dir / "locales"
-        if locales_src.exists():
-            shutil.copytree(locales_src, out_dir / "locales")
-            print(f"  Copied locales/")
+        _copy_en_locale(cef_dir, out_dir)
     elif rid.startswith("linux"):
         for f in CEF_FILES_LINUX:
             src = cef_dir / f
@@ -196,10 +204,7 @@ def collect_runtime(rid: str, info: dict, skip_build: bool):
                 shutil.copy2(src, out_dir / f)
             else:
                 print(f"  WARNING: {f} not found in CEF dir")
-        locales_src = cef_dir / "locales"
-        if locales_src.exists():
-            shutil.copytree(locales_src, out_dir / "locales")
-            print(f"  Copied locales/")
+        _copy_en_locale(cef_dir, out_dir)
 
 
 def main():
