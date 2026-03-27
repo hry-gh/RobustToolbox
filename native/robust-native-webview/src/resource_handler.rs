@@ -95,6 +95,15 @@ wrap_resource_request_handler! {
     }
 
     impl ResourceRequestHandler {
+        fn cookie_access_filter(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+        ) -> Option<CookieAccessFilter> {
+            Some(AllowAllCookies::new())
+        }
+
         fn on_before_resource_load(
             &self,
             _browser: Option<&mut Browser>,
@@ -113,6 +122,33 @@ wrap_resource_request_handler! {
         ) -> Option<ResourceHandler> {
             let response = self.response.lock().ok()?.take()?;
             Some(create_buffered_resource_handler(response))
+        }
+    }
+}
+
+wrap_cookie_access_filter! {
+    struct AllowAllCookies;
+
+    impl CookieAccessFilter {
+        fn can_send_cookie(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _cookie: Option<&Cookie>,
+        ) -> ::std::os::raw::c_int {
+            1
+        }
+
+        fn can_save_cookie(
+            &self,
+            _browser: Option<&mut Browser>,
+            _frame: Option<&mut Frame>,
+            _request: Option<&mut Request>,
+            _response: Option<&mut Response>,
+            _cookie: Option<&Cookie>,
+        ) -> ::std::os::raw::c_int {
+            1
         }
     }
 }

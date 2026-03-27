@@ -237,9 +237,10 @@ namespace Robust.Client.WebView.Cef
 
             public void CloseBrowser()
             {
-                DebugTools.Assert(_browserHandle != 0);
+                if (_browserHandle == 0)
+                    return;
 
-                _data!.Texture.Dispose();
+                _data?.Texture.Dispose();
                 NativeWebView.rnw_browser_close(_browserHandle);
                 _browserHandle = 0;
                 _data = null;
