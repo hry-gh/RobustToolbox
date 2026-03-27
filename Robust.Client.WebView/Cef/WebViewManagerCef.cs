@@ -66,7 +66,7 @@ namespace Robust.Client.WebView.Cef
                 FrameworkPath = Path.Combine(BasePath,
                     "..", "Frameworks", "Chromium Embedded Framework.framework",
                     "Chromium Embedded Framework"),
-                MainBundlePath = Path.Combine(BasePath, "..", ".."),
+                MainBundlePath = Path.Combine(BasePath, ".."),
 #endif
             };
 
