@@ -48,8 +48,11 @@ pub(crate) fn cef_userfree_to_cstring(s: &CefStringUserfree, default: &str) -> O
     CString::new(utf8.as_str().unwrap_or(default)).ok()
 }
 
-// --- Lifecycle ---
-
+/// Initializes the native webview with the provided settings.
+///
+/// # Safety
+/// The `settings` pointer must be valid and point to a properly initialized `RnwSettings` struct.
+/// Passing a null or invalid pointer will result in undefined behavior.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
     if settings.is_null() {
@@ -60,7 +63,7 @@ pub unsafe extern "C" fn rnw_initialize(settings: *const RnwSettings) -> i32 {
     #[cfg(target_os = "macos")]
     {
         if !s.framework_path.is_null() {
-            let Some(path_str) = cstr_to_string(s.framework_path) else {
+            let Some(path_str) = (unsafe { cstr_to_string(s.framework_path) }) else {
                 eprintln!("[rnw] framework_path is not valid UTF-8");
                 return RNW_ERROR;
             };
@@ -174,8 +177,11 @@ pub extern "C" fn rnw_flush_cookies() {
     }
 }
 
-// --- Browser Management ---
-
+/// Creates a new offscreen browser.
+///
+/// # Safety
+/// - `url` must be null or a valid null-terminated C string.
+/// - `callbacks` must be a valid pointer to an initialized `RnwBrowserCallbacks` struct.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_create(
     url: *const c_char,
@@ -184,8 +190,8 @@ pub unsafe extern "C" fn rnw_browser_create(
     if callbacks.is_null() {
         return RNW_HANDLE_INVALID;
     }
-    let cbs = *callbacks;
-    let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
+    let cbs = unsafe { *callbacks };
+    let url_str = unsafe { cstr_to_string(url) }.unwrap_or_else(|| "about:blank".to_string());
 
     let data = Arc::new(CallbackData { callbacks: cbs });
     let mut cef_client = client::create_client(data);
@@ -224,15 +230,17 @@ pub unsafe extern "C" fn rnw_browser_create(
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_close(handle: u64) {
     let browser = with_state(|state| state.browsers.remove(&handle));
-    if let Some(Some(browser)) = browser {
-        if let Some(host) = browser.host() {
-            host.close_browser(1);
-        }
+    if let Some(Some(browser)) = browser
+        && let Some(host) = browser.host()
+    {
+        host.close_browser(1);
     }
 }
 
-// --- Navigation ---
-
+/// Gets the current URL of the browser.
+///
+/// # Safety
+/// `buf` must be null or a valid pointer to a writable buffer of at least `buf_len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_len: i32) -> i32 {
     let Some(browser) = get_browser(handle) else {
@@ -248,29 +256,39 @@ pub unsafe extern "C" fn rnw_browser_get_url(handle: u64, buf: *mut c_char, buf_
     let bytes = url.as_bytes();
     let copy_len = bytes.len().min((buf_len as usize).saturating_sub(1));
     if !buf.is_null() && buf_len > 0 {
-        ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
-        *buf.add(copy_len) = 0;
+        unsafe {
+            ptr::copy_nonoverlapping(bytes.as_ptr(), buf as *mut u8, copy_len);
+            *buf.add(copy_len) = 0
+        };
     }
     bytes.len() as i32
 }
 
+/// Navigates the browser to the specified URL.
+///
+/// # Safety
+/// `url` must be a valid null-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_load_url(handle: u64, url: *const c_char) {
     let Some(browser) = get_browser(handle) else {
         return;
     };
-    let cef_url = cstr_to_cef_string(url);
+    let cef_url = unsafe { cstr_to_cef_string(url) };
     if let Some(frame) = browser.main_frame() {
         frame.load_url(Some(&cef_url));
     }
 }
 
+/// Executes JavaScript code in the browser.
+///
+/// # Safety
+/// `code` must be a valid null-terminated C string.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_execute_js(handle: u64, code: *const c_char) {
     let Some(browser) = get_browser(handle) else {
         return;
     };
-    let cef_code = cstr_to_cef_string(code);
+    let cef_code = unsafe { cstr_to_cef_string(code) };
     let empty = CefString::from("");
     if let Some(frame) = browser.main_frame() {
         frame.execute_java_script(Some(&cef_code), Some(&empty), 1);
@@ -319,8 +337,6 @@ pub extern "C" fn rnw_browser_stop_load(handle: u64) {
         b.stop_load();
     }
 }
-
-// --- Input ---
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_send_mouse_move(
@@ -383,6 +399,10 @@ pub extern "C" fn rnw_browser_send_mouse_wheel(
     }
 }
 
+/// Sends a key event to the browser.
+///
+/// # Safety
+/// `event` must be null or a valid pointer to an initialized `RnwKeyEvent` struct.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_browser_send_key_event(handle: u64, event: *const RnwKeyEvent) {
     if event.is_null() {
@@ -391,7 +411,7 @@ pub unsafe extern "C" fn rnw_browser_send_key_event(handle: u64, event: *const R
     let Some(browser) = get_browser(handle) else {
         return;
     };
-    let e = &*event;
+    let e = unsafe { &*event };
     let event_type = match e.event_type {
         1 => KeyEventType::from(cef::sys::cef_key_event_type_t::KEYEVENT_KEYUP),
         2 => KeyEventType::from(cef::sys::cef_key_event_type_t::KEYEVENT_CHAR),
@@ -415,38 +435,41 @@ pub unsafe extern "C" fn rnw_browser_send_key_event(handle: u64, event: *const R
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_was_resized(handle: u64) {
-    if let Some(b) = get_browser(handle) {
-        if let Some(h) = b.host() {
-            h.was_resized();
-        }
+    if let Some(b) = get_browser(handle)
+        && let Some(h) = b.host()
+    {
+        h.was_resized();
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_invalidate(handle: u64) {
-    if let Some(b) = get_browser(handle) {
-        if let Some(h) = b.host() {
-            h.invalidate(PaintElementType::from(
-                cef::sys::cef_paint_element_type_t::PET_VIEW,
-            ));
-        }
+    if let Some(b) = get_browser(handle)
+        && let Some(h) = b.host()
+    {
+        h.invalidate(PaintElementType::from(
+            cef::sys::cef_paint_element_type_t::PET_VIEW,
+        ));
     }
 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rnw_browser_notify_move_or_resize_started(handle: u64) {
-    if let Some(b) = get_browser(handle) {
-        if let Some(h) = b.host() {
-            h.notify_move_or_resize_started();
-        }
+    if let Some(b) = get_browser(handle)
+        && let Some(h) = b.host()
+    {
+        h.notify_move_or_resize_started();
     }
 }
-
-// --- Resource Request Response ---
 
 /// Write response data to a response context.
 /// Called by C# from within an on_resource_request callback.
 /// The `ctx` pointer is provided by Rust and remains valid for the duration of the callback.
+///
+/// # Safety
+/// - `ctx` must be a valid pointer to a `ResponseContext` provided by a callback.
+/// - `mime_type` must be null or a valid null-terminated C string.
+/// - `data` must be null or a valid pointer to `data_len` bytes.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_response_write(
     ctx: *mut ResponseContext,
@@ -462,8 +485,8 @@ pub unsafe extern "C" fn rnw_response_write(
 
     let ctx = unsafe { &mut *ctx };
     ctx.status_code = status_code;
-    ctx.mime_type =
-        cstr_to_string(mime_type).unwrap_or_else(|| "application/octet-stream".to_string());
+    ctx.mime_type = unsafe { cstr_to_string(mime_type) }
+        .unwrap_or_else(|| "application/octet-stream".to_string());
     ctx.data = if !data.is_null() && data_len > 0 {
         unsafe { std::slice::from_raw_parts(data, data_len as usize).to_vec() }
     } else {
@@ -472,9 +495,12 @@ pub unsafe extern "C" fn rnw_response_write(
     ctx.was_set = true;
 }
 
-// --- Scheme Handler Registration ---
-
+/// Registers a handler for the "res" scheme.
 /// The callback is called synchronously for each request.
+///
+/// # Safety
+/// - `callback` must be a valid function pointer.
+/// - `user_data` must remain valid for the lifetime of the handler.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_register_res_scheme_handler(
     callback: scheme_handler::ResSchemeCallback,
@@ -493,7 +519,13 @@ pub unsafe extern "C" fn rnw_register_res_scheme_handler(
     );
 }
 
+/// Registers a handler for a custom scheme and domain.
 /// The callback is called synchronously for each request to that scheme+domain.
+///
+/// # Safety
+/// - `scheme` and `domain` must be valid null-terminated C strings.
+/// - `callback` must be a valid function pointer.
+/// - `user_data` must remain valid for the lifetime of the handler.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_register_scheme_handler(
     scheme: *const c_char,
@@ -501,8 +533,8 @@ pub unsafe extern "C" fn rnw_register_scheme_handler(
     callback: scheme_handler::ResSchemeCallback,
     user_data: *mut std::os::raw::c_void,
 ) {
-    let scheme_str = cstr_to_string(scheme).unwrap_or_default();
-    let domain_str = cstr_to_string(domain).unwrap_or_default();
+    let scheme_str = unsafe { cstr_to_string(scheme).unwrap_or_default() };
+    let domain_str = unsafe { cstr_to_string(domain).unwrap_or_default() };
 
     let data = Arc::new(scheme_handler::SchemeCallbackData {
         callback,
@@ -517,8 +549,11 @@ pub unsafe extern "C" fn rnw_register_scheme_handler(
     );
 }
 
-// --- Window Browser (popup) ---
-
+/// Creates a new windowed browser (popup).
+///
+/// # Safety
+/// - `url` must be null or a valid null-terminated C string.
+/// - `callbacks` must be a valid pointer to an initialized `RnwBrowserCallbacks` struct.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn rnw_window_create(
     url: *const c_char,
@@ -529,8 +564,8 @@ pub unsafe extern "C" fn rnw_window_create(
     if callbacks.is_null() {
         return RNW_HANDLE_INVALID;
     }
-    let cbs = *callbacks;
-    let url_str = cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string());
+    let cbs = unsafe { *callbacks };
+    let url_str = unsafe { cstr_to_string(url).unwrap_or_else(|| "about:blank".to_string()) };
 
     let data = Arc::new(CallbackData { callbacks: cbs });
     let mut cef_client = client::create_client(data);

@@ -184,11 +184,8 @@ internal unsafe struct RnwSettingsBuilder : IDisposable
     public string? FrameworkDirPath { set => Settings.FrameworkDirPath = AllocUtf8(value); }
     public string? MainBundlePath { set => Settings.MainBundlePath = AllocUtf8(value); }
 
-    private byte* AllocUtf8(string? s)
+    private byte* AllocUtf8(string s)
     {
-        if (s == null)
-            return null;
-
         var bytes = System.Text.Encoding.UTF8.GetBytes(s);
         var ptr = Marshal.AllocHGlobal(bytes.Length + 1);
         Marshal.Copy(bytes, 0, ptr, bytes.Length);

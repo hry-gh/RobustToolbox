@@ -34,12 +34,12 @@ fn main() {
 
 fn find_macos_ar() -> Option<PathBuf> {
     // Try xcrun first (works in Xcode and Command Line Tools).
-    if let Ok(output) = Command::new("xcrun").args(["--find", "ar"]).output() {
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !path.is_empty() {
-                return Some(PathBuf::from(path));
-            }
+    if let Ok(output) = Command::new("xcrun").args(["--find", "ar"]).output()
+        && output.status.success()
+    {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            return Some(PathBuf::from(path));
         }
     }
     // Fall back to /usr/bin/ar which is the macOS system default.
