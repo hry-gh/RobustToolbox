@@ -52,7 +52,7 @@ namespace Robust.Client.WebView.Cef
 
         [UnmanagedCallersOnly]
         private static unsafe int WindowOnResourceRequestCallback(
-            void* userData, ulong requestId, byte* urlPtr, byte* methodPtr)
+            void* userData, byte* urlPtr, byte* methodPtr, ResponseContext* responseCtx)
         {
             var impl = ResolveWindow(userData);
             if (impl == null) return 0;
@@ -74,11 +74,15 @@ namespace Robust.Client.WebView.Cef
                     if (context.ResponseData != null)
                     {
                         var data = context.ResponseData;
-                        NativeWebView.rnw_request_set_response(
-                            requestId,
-                            data.StatusCode,
-                            data.MimeType,
-                            data.Data);
+                        fixed (byte* dataPtr = data.Data)
+                        {
+                            NativeWebView.rnw_response_write(
+                                responseCtx,
+                                data.StatusCode,
+                                data.MimeType,
+                                dataPtr,
+                                data.Data.Length);
+                        }
                         return 1;
                     }
                 }

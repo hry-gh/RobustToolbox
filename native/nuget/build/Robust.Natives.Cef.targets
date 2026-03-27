@@ -22,30 +22,23 @@
           Link="%(RecursiveDir)%(Filename)%(Extension)" />
   </ItemGroup>
 
-  <!-- macOS arm64 -->
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(OSX))' == 'true' And '$(NETCoreSdkProcessorArchitecture)' == 'arm64')">
-    <!-- CEF framework goes into Frameworks/ for macOS app bundle layout -->
-    <None Include="$(_RnwNativeDir)osx-arm64\native\Chromium Embedded Framework.framework\**\*"
-          CopyToOutputDirectory="PreserveNewest"
-          Link="Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
-    <!-- Helper and webview library go alongside the executable -->
-    <None Include="$(_RnwNativeDir)osx-arm64\native\cef-helper"
-          CopyToOutputDirectory="PreserveNewest"
-          Link="cef-helper" />
-    <None Include="$(_RnwNativeDir)osx-arm64\native\librobust_native_webview.dylib"
-          CopyToOutputDirectory="PreserveNewest"
-          Link="librobust_native_webview.dylib" />
-  </ItemGroup>
+  <!-- macOS: detect architecture via RuntimeIdentifier or processor arch -->
+  <PropertyGroup Condition="'$([MSBuild]::IsOSPlatform(OSX))' == 'true' And '$(RuntimeIdentifier)' == ''">
+    <_RnwMacRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' == 'Arm64'">osx-arm64</_RnwMacRid>
+    <_RnwMacRid Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::OSArchitecture)' != 'Arm64'">osx-x64</_RnwMacRid>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != '' And $(RuntimeIdentifier.StartsWith('osx'))">
+    <_RnwMacRid>$(RuntimeIdentifier)</_RnwMacRid>
+  </PropertyGroup>
 
-  <!-- macOS x64 -->
-  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(OSX))' == 'true' And '$(NETCoreSdkProcessorArchitecture)' != 'arm64')">
-    <None Include="$(_RnwNativeDir)osx-x64\native\Chromium Embedded Framework.framework\**\*"
+  <ItemGroup Condition="'$(_RnwMacRid)' != ''">
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Chromium Embedded Framework.framework\**\*"
           CopyToOutputDirectory="PreserveNewest"
           Link="Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
-    <None Include="$(_RnwNativeDir)osx-x64\native\cef-helper"
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\cef-helper"
           CopyToOutputDirectory="PreserveNewest"
           Link="cef-helper" />
-    <None Include="$(_RnwNativeDir)osx-x64\native\librobust_native_webview.dylib"
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\librobust_native_webview.dylib"
           CopyToOutputDirectory="PreserveNewest"
           Link="librobust_native_webview.dylib" />
   </ItemGroup>
