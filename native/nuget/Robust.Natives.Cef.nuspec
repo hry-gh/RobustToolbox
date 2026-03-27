@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<package xmlns="http://schemas.microsoft.com/packaging/2012/06/nuspec.xsd">
+  <metadata>
+    <id>Robust.Natives.Cef</id>
+    <!-- Version should match the CEF version from cef-rs (e.g. 146.0.6) -->
+    <version>146.0.6</version>
+    <authors>Space Wizards</authors>
+    <description>
+      Native CEF (Chromium Embedded Framework) binaries and Rust webview interop library
+      for RobustToolbox. Includes libcef, cef-helper subprocess, and robust_native_webview
+      for Windows (x64), Linux (x64), and macOS (x64, arm64).
+    </description>
+    <license type="expression">MIT</license>
+    <repository type="git" url="https://github.com/space-wizards/RobustToolbox" />
+    <tags>cef chromium webview native</tags>
+  </metadata>
+  <files>
+    <!-- MSBuild targets for copying natives to output -->
+    <file src="build/Robust.Natives.Cef.targets" target="build/" />
+
+    <!-- Windows x64 -->
+    <file src="runtimes/win-x64/native/**" target="runtimes/win-x64/native/" />
+
+    <!-- Linux x64 -->
+    <file src="runtimes/linux-x64/native/**" target="runtimes/linux-x64/native/" />
+
+    <!-- macOS arm64 -->
+    <file src="runtimes/osx-arm64/native/**" target="runtimes/osx-arm64/native/" />
+
+    <!-- macOS x64 -->
+    <file src="runtimes/osx-x64/native/**" target="runtimes/osx-x64/native/" />
+  </files>
+</package>

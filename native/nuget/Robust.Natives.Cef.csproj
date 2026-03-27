@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <!-- This project only exists to pack the NuGet package -->
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <PackageId>Robust.Natives.Cef</PackageId>
+    <PackageVersion>146.0.6</PackageVersion>
+    <Authors>Space Wizards</Authors>
+    <Description>Native CEF binaries and Rust webview interop for RobustToolbox</Description>
+    <NoBuild>true</NoBuild>
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="build\**" PackagePath="build\" />
+    <Content Include="runtimes\**" PackagePath="runtimes\" />
+  </ItemGroup>
+</Project>

@@ -10,6 +10,7 @@
 
   <ItemGroup>
     <PackageReference Include="JetBrains.Annotations" />
+    <PackageReference Include="Robust.Natives.Cef" />
     <PackageReference Include="SixLabors.ImageSharp" />
   </ItemGroup>
 

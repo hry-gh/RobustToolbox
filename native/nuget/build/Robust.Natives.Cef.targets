@@ -1,0 +1,52 @@
+<Project xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <!--
+    Copies CEF native files to the output directory.
+    The runtime identifier determines which platform files are copied.
+  -->
+
+  <PropertyGroup>
+    <_RnwNativeDir>$(MSBuildThisFileDirectory)..\runtimes\</_RnwNativeDir>
+  </PropertyGroup>
+
+  <!-- Windows x64 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'win-x64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(Windows))' == 'true')">
+    <None Include="$(_RnwNativeDir)win-x64\native\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- Linux x64 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'linux-x64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(Linux))' == 'true')">
+    <None Include="$(_RnwNativeDir)linux-x64\native\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!-- macOS arm64 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-arm64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(OSX))' == 'true' And '$(NETCoreSdkProcessorArchitecture)' == 'arm64')">
+    <!-- CEF framework goes into Frameworks/ for macOS app bundle layout -->
+    <None Include="$(_RnwNativeDir)osx-arm64\native\Chromium Embedded Framework.framework\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
+    <!-- Helper and webview library go alongside the executable -->
+    <None Include="$(_RnwNativeDir)osx-arm64\native\cef-helper"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="cef-helper" />
+    <None Include="$(_RnwNativeDir)osx-arm64\native\librobust_native_webview.dylib"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="librobust_native_webview.dylib" />
+  </ItemGroup>
+
+  <!-- macOS x64 -->
+  <ItemGroup Condition="'$(RuntimeIdentifier)' == 'osx-x64' Or ('$(RuntimeIdentifier)' == '' And '$([MSBuild]::IsOSPlatform(OSX))' == 'true' And '$(NETCoreSdkProcessorArchitecture)' != 'arm64')">
+    <None Include="$(_RnwNativeDir)osx-x64\native\Chromium Embedded Framework.framework\**\*"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
+    <None Include="$(_RnwNativeDir)osx-x64\native\cef-helper"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="cef-helper" />
+    <None Include="$(_RnwNativeDir)osx-x64\native\librobust_native_webview.dylib"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="librobust_native_webview.dylib" />
+  </ItemGroup>
+</Project>
