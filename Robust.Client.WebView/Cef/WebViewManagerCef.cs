@@ -43,7 +43,7 @@ namespace Robust.Client.WebView.Cef
                 _localization.GetString("cmd-flushcookies-help"),
                 (_, _, _) => NativeWebView.rnw_flush_cookies());
 
-            var subProcessName = OperatingSystem.IsWindows() ? "cef-helper.exe" : "cef-helper";
+            var subProcessName = OperatingSystem.IsWindows() ? "Robust.Client.WebView.exe" : "Robust.Client.WebView";
             var subProcessPath = Path.Combine(BasePath, subProcessName);
             _sawmill.Debug($"Subprocess path: {subProcessPath}");
 
@@ -61,12 +61,12 @@ namespace Robust.Client.WebView.Cef
                 ResourcesDirPath = BasePath,
                 LocalesDirPath = Path.Combine(BasePath, "locales"),
 #else
-                FrameworkDirPath = PathHelpers.ExecutableRelativeFile(
-                    "../Frameworks/Chromium Embedded Framework.framework"),
-                FrameworkPath = Path.Combine(
-                    PathHelpers.ExecutableRelativeFile("../Frameworks/Chromium Embedded Framework.framework"),
+                FrameworkDirPath = Path.Combine(BasePath,
+                    "Frameworks", "Chromium Embedded Framework.framework"),
+                FrameworkPath = Path.Combine(BasePath,
+                    "Frameworks", "Chromium Embedded Framework.framework",
                     "Chromium Embedded Framework"),
-                MainBundlePath = PathHelpers.ExecutableRelativeFile("../.."),
+                MainBundlePath = Path.Combine(BasePath, "..", ".."),
 #endif
             };
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-# Packages a full release build of the client that can be loaded by the launcher.
-# Native libraries are not included.
+# Packages the Robust.Client.WebView module for distribution via the launcher.
+# Includes managed assemblies and CEF native binaries from the Robust.Natives.Cef NuGet package.
 
 import os
 import shutil
@@ -30,10 +30,68 @@ p = os.path.join
 
 PLATFORM_WINDOWS = "win-x64"
 PLATFORM_LINUX = "linux-x64"
-PLATFORM_LINUX_ARM64 = "linux-arm64"
-PLATFORM_MACOS = "osx-x64"
+PLATFORM_MACOS_ARM64 = "osx-arm64"
+PLATFORM_MACOS_X64 = "osx-x64"
+
+ALL_PLATFORMS = [PLATFORM_WINDOWS, PLATFORM_LINUX, PLATFORM_MACOS_ARM64, PLATFORM_MACOS_X64]
 
 TARGET_FRAMEWORK = "net10.0"
+
+# Managed DLLs to include in every platform zip.
+MANAGED_FILES = [
+    "Robust.Client.WebView.dll",
+    "Robust.Client.WebView.pdb",
+    "Robust.Client.WebView.deps.json",
+    # Dependencies needed when the module is loaded standalone.
+    "Robust.Client.dll",
+    "Robust.Shared.dll",
+    "Robust.Shared.Maths.dll",
+    "SharpZstd.Interop.dll",
+]
+
+# CEF native files per platform (allowlist).
+# These are copied flat into the build output by the Robust.Natives.Cef MSBuild targets.
+CEF_NATIVE_FILES_WINDOWS = [
+    "robust_native_webview.dll",
+    "Robust.Client.WebView.exe",
+    "libcef.dll",
+    "chrome_elf.dll",
+    "libEGL.dll",
+    "libGLESv2.dll",
+    "v8_context_snapshot.bin",
+    "vk_swiftshader.dll",
+    "vk_swiftshader_icd.json",
+    "vulkan-1.dll",
+    "icudtl.dat",
+    "chrome_100_percent.pak",
+    "chrome_200_percent.pak",
+    "resources.pak",
+]
+
+CEF_NATIVE_FILES_LINUX = [
+    "librobust_native_webview.so",
+    "Robust.Client.WebView",
+    "libcef.so",
+    "libEGL.so",
+    "libGLESv2.so",
+    "libvk_swiftshader.so",
+    "vk_swiftshader_icd.json",
+    "v8_context_snapshot.bin",
+    "icudtl.dat",
+    "chrome_100_percent.pak",
+    "chrome_200_percent.pak",
+    "resources.pak",
+]
+
+CEF_NATIVE_FILES_MACOS = [
+    "librobust_native_webview.dylib",
+    "Robust.Client.WebView",
+    "libEGL.dylib",
+    "libGLESv2.dylib",
+    "libvk_swiftshader.dylib",
+    "vk_swiftshader_icd.json",
+]
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(
@@ -41,7 +99,7 @@ def main() -> None:
     parser.add_argument("--platform",
                         "-p",
                         action="store",
-                        choices=[PLATFORM_WINDOWS, PLATFORM_MACOS, PLATFORM_LINUX, PLATFORM_LINUX_ARM64],
+                        choices=ALL_PLATFORMS,
                         nargs="*",
                         help="Which platform to build for. If not provided, all platforms will be built")
 
@@ -54,7 +112,7 @@ def main() -> None:
     skip_build = args.skip_build
 
     if not platforms:
-        platforms = [PLATFORM_WINDOWS, PLATFORM_LINUX]
+        platforms = ALL_PLATFORMS
 
     if os.path.exists("release"):
         print(Fore.BLUE + Style.DIM +
@@ -64,15 +122,11 @@ def main() -> None:
     else:
         os.mkdir("release")
 
-    if PLATFORM_WINDOWS in platforms:
+    for platform in platforms:
         if not skip_build:
             wipe_bin()
-        build_windows(skip_build)
+        build_platform(platform, skip_build)
 
-    if PLATFORM_LINUX in platforms:
-        if not skip_build:
-            wipe_bin()
-        build_linux(skip_build)
 
 def wipe_bin():
     print(Fore.BLUE + Style.DIM +
@@ -83,135 +137,83 @@ def wipe_bin():
         shutil.rmtree(RCWebViewBin)
 
 
-def build_windows(skip_build: bool) -> None:
-    # Run a full build.
-    print(Fore.GREEN + "Building project for Windows x64..." + Style.RESET_ALL)
+def target_os_for_rid(rid: str) -> str:
+    if rid.startswith("win"):
+        return "Windows"
+    elif rid.startswith("linux"):
+        return "Linux"
+    elif rid.startswith("osx"):
+        return "MacOS"
+    raise ValueError(f"Unknown RID: {rid}")
 
+
+def build_platform(rid: str, skip_build: bool) -> None:
+    print(Fore.GREEN + f"Building and packaging {rid}..." + Style.RESET_ALL)
+
+    target_os = target_os_for_rid(rid)
     base_bin = p("Robust.Client.WebView", "bin", "Release", TARGET_FRAMEWORK)
 
     if not skip_build:
-        build_client_rid("Windows", "win-x64")
-        build_client("Windows")
-        if sys.platform != "win32":
-            subprocess.run(["Tools/exe_set_subsystem.py", p(base_bin, "Robust.Client.WebView.exe"), "2"])
+        # RID-specific build to pull in native files from NuGet targets.
+        subprocess.run([
+            "dotnet", "build",
+            "-c", "Release",
+            "-r", rid,
+            f"/p:TargetOS={target_os}",
+            "/p:FullRelease=True",
+            "--no-self-contained",
+            "Robust.Client.WebView/Robust.Client.WebView.csproj",
+        ], check=True)
 
+    rid_bin = p(base_bin, rid)
 
-    print(Fore.GREEN + "Packaging win-x64..." + Style.RESET_ALL)
-
-    client_zip = zipfile.ZipFile(
-        p("release", "Robust.Client.WebView_win-x64.zip"), "w",
-        compression=zipfile.ZIP_DEFLATED)
-
-    files_to_copy = [
-        "Robust.Client.WebView.dll",
-        "Robust.Client.WebView.exe",
-        "Robust.Client.WebView.runtimeconfig.json",
-        "Robust.Client.WebView.pdb",
-        "Robust.Client.WebView.deps.json",
-        "SpaceWizards.CefGlue.dll",
-        "SpaceWizards.CefGlue.pdb",
-        # These are copies of regular Robust dlls that Robust.Client.WebView needs when ran on its own.
-        "Robust.Client.dll",
-        "Robust.Shared.dll",
-        "Robust.Shared.Maths.dll",
-        "SharpZstd.Interop.dll",
-    ]
-
-    for f in files_to_copy:
-        client_zip.write(p(base_bin, "win-x64", f), f)
-
-    copy_dir_into_zip(p(base_bin, "runtimes", "win-x64", "native"), "", client_zip, {
-        "e_sqlite3.dll",
-        "fluidsynth.dll",
-        "freetype6.dll",
-        "glfw3.dll",
-        "libglib-2.0-0.dll",
-        "libgobject-2.0-0.dll",
-        "libgthread-2.0-0.dll",
-        "libinstpatch-2.dll",
-        "libintl-8.dll",
-        "libsndfile-1.dll",
-        "openal32.dll",
-        "swnfd.dll",
-        "zstd.pdb",
-        "zstd.dll",
-        "zlib1.dll",
-        "libsodium.dll"
-    })
-
-    # Cool we're done.
-    client_zip.close()
-
-def build_linux(skip_build: bool) -> None:
-    # Run a full build.
-    print(Fore.GREEN + "Building project for Linux x64..." + Style.RESET_ALL)
-
-    base_bin = p("Robust.Client.WebView", "bin", "Release", TARGET_FRAMEWORK)
-
-    if not skip_build:
-        build_client_rid("Linux", "linux-x64")
-        build_client("Linux")
-
-    print(Fore.GREEN + "Packaging linux-x64..." + Style.RESET_ALL)
+    print(Fore.GREEN + f"Packaging {rid}..." + Style.RESET_ALL)
 
     client_zip = zipfile.ZipFile(
-        p("release", "Robust.Client.WebView_linux-x64.zip"), "w",
+        p("release", f"Robust.Client.WebView_{rid}.zip"), "w",
         compression=zipfile.ZIP_DEFLATED)
 
-    files_to_copy = [
-        "Robust.Client.WebView.dll",
-        "Robust.Client.WebView.runtimeconfig.json",
-        "Robust.Client.WebView.pdb",
-        "Robust.Client.WebView",
-        "Robust.Client.WebView.deps.json",
-        "SpaceWizards.CefGlue.dll",
-        "SpaceWizards.CefGlue.pdb",
-        # These are copies of regular Robust dlls that Robust.Client.WebView needs when ran on its own.
-        "Robust.Client.dll",
-        "Robust.Shared.dll",
-        "Robust.Shared.Maths.dll",
-        "SharpZstd.Interop.dll",
-    ]
+    # Copy managed assemblies.
+    for f in MANAGED_FILES:
+        src = p(rid_bin, f)
+        if os.path.exists(src):
+            client_zip.write(src, f)
+        else:
+            print(Fore.YELLOW + f"  WARNING: managed file {f} not found" + Style.RESET_ALL)
 
-    for f in files_to_copy:
-        client_zip.write(p(base_bin, "linux-x64", f), f)
+    # Copy CEF native files.
+    if rid.startswith("win"):
+        native_files = CEF_NATIVE_FILES_WINDOWS
+    elif rid.startswith("linux"):
+        native_files = CEF_NATIVE_FILES_LINUX
+    elif rid.startswith("osx"):
+        native_files = CEF_NATIVE_FILES_MACOS
+    else:
+        native_files = []
 
-    copy_dir_into_zip(p(base_bin, "runtimes", "linux-x64", "native"), "", client_zip, {
-        "libglfw.so.3",
-        "libe_sqlite3.so",
-        "libopenal.so",
-        "libswnfd.so",
-    })
+    for f in native_files:
+        src = p(rid_bin, f)
+        if os.path.exists(src):
+            client_zip.write(src, f)
+        else:
+            print(Fore.YELLOW + f"  WARNING: native file {f} not found" + Style.RESET_ALL)
 
-    # Cool we're done.
+    # Copy locales directory (Windows/Linux).
+    if rid.startswith("win") or rid.startswith("linux"):
+        locales_dir = p(rid_bin, "locales")
+        if os.path.isdir(locales_dir):
+            copy_dir_into_zip(locales_dir, "locales", client_zip)
+
+    # Copy macOS framework bundle.
+    if rid.startswith("osx"):
+        fw_dir = p(rid_bin, "Frameworks", "Chromium Embedded Framework.framework")
+        if os.path.isdir(fw_dir):
+            copy_dir_into_zip(fw_dir, p("Frameworks", "Chromium Embedded Framework.framework"), client_zip)
+        else:
+            print(Fore.RED + f"  ERROR: Framework not found at {fw_dir}" + Style.RESET_ALL)
+
     client_zip.close()
-
-
-def build_client(target_os: str) -> None:
-    # Running a publish will fold all the natives in the runtime directories into one folder.
-    # This basically nukes the entire setup.
-    # As bypass, we do an all-platform build and then copy the natives manually.
-    base = [
-        "dotnet", "build",
-        "-c", "Release",
-        f"/p:TargetOS={target_os}",
-        "/p:FullRelease=True",
-        "--no-self-contained",
-    ]
-
-    subprocess.run(base + ["Robust.Client.WebView/Robust.Client.WebView.csproj"], check=True)
-
-def build_client_rid(target_os: str, rid: str) -> None:
-    base = [
-        "dotnet", "build",
-        "-c", "Release",
-        "-r", rid,
-        f"/p:TargetOS={target_os}",
-        "/p:FullRelease=True",
-        "--no-self-contained",
-    ]
-
-    subprocess.run(base + ["Robust.Client.WebView/Robust.Client.WebView.csproj"], check=True)
+    print(Fore.GREEN + f"  Created release/Robust.Client.WebView_{rid}.zip" + Style.RESET_ALL)
 
 
 def zip_entry_exists(zipf, name):
@@ -249,21 +251,6 @@ def copy_dir_into_zip(directory, basepath, zipf, ignored={}):
 
             print(Fore.CYAN + message + Style.RESET_ALL)
             zipf.write(filepath, zippath)
-
-
-def copy_dir_or_file(src: str, dst: str):
-    """
-    Just something from src to dst. If src is a dir it gets copied recursively.
-    """
-
-    if os.path.isfile(src):
-        shutil.copy2(src, dst)
-
-    elif os.path.isdir(src):
-        shutil.copytree(src, dst)
-
-    else:
-        raise IOError("{} is neither file nor directory. Can't copy.".format(src))
 
 
 if __name__ == '__main__':
