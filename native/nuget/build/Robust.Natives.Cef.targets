@@ -34,15 +34,24 @@
   <ItemGroup Condition="'$(_RnwMacRid)' != ''">
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Chromium Embedded Framework.framework\**\*"
           CopyToOutputDirectory="PreserveNewest"
-          Link="Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
+          Link="..\Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\cef-helper"
           CopyToOutputDirectory="PreserveNewest"
           Link="cef-helper" />
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\librobust_native_webview.dylib"
           CopyToOutputDirectory="PreserveNewest"
           Link="librobust_native_webview.dylib" />
-    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Chromium Embedded Framework.framework\Libraries\*"
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\libEGL.dylib"
           CopyToOutputDirectory="PreserveNewest"
-          Link="%(Filename)%(Extension)" />
+          Link="libEGL.dylib" />
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\libGLESv2.dylib"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="libGLESv2.dylib" />
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\libvk_swiftshader.dylib"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="libvk_swiftshader.dylib" />
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\vk_swiftshader_icd.json"
+          CopyToOutputDirectory="PreserveNewest"
+          Link="vk_swiftshader_icd.json" />
   </ItemGroup>
 </Project>

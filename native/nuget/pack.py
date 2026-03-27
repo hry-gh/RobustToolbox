@@ -167,6 +167,13 @@ def collect_runtime(rid: str, info: dict, skip_build: bool):
         if fw_src.exists():
             shutil.copytree(fw_src, fw_dst, symlinks=True)
             print(f"  Copied Chromium Embedded Framework.framework")
+
+            # Copy ANGLE/Vulkan libs flat alongside the executable so CEF subprocesses can find them
+            for lib in ["libEGL.dylib", "libGLESv2.dylib", "libvk_swiftshader.dylib", "vk_swiftshader_icd.json"]:
+                lib_src = fw_src / "Libraries" / lib
+                if lib_src.exists():
+                    shutil.copy2(lib_src, out_dir / lib)
+                    print(f"  Copied flat {lib}")
         else:
             print(f"  WARNING: Framework not found at {fw_src}")
     elif rid.startswith("win"):
