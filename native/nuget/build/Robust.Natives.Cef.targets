@@ -35,9 +35,9 @@
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Chromium Embedded Framework.framework\**\*"
           CopyToOutputDirectory="PreserveNewest"
           Link="..\Frameworks\Chromium Embedded Framework.framework\%(RecursiveDir)%(Filename)%(Extension)" />
-    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\Robust.Client.WebView"
+    <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\cef-helper"
           CopyToOutputDirectory="PreserveNewest"
-          Link="Robust.Client.WebView" />
+          Link="cef-helper" />
     <None Include="$(_RnwNativeDir)$(_RnwMacRid)\native\librobust_native_webview.dylib"
           CopyToOutputDirectory="PreserveNewest"
           Link="librobust_native_webview.dylib" />

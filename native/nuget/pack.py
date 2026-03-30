@@ -151,12 +151,11 @@ def collect_runtime(rid: str, info: dict, skip_build: bool):
     else:
         print(f"  WARNING: {webview_src} not found!")
 
-    # Copy cef-helper, renamed to Robust.Client.WebView for launcher compatibility
+    # Copy cef-helper
     helper_src = target_dir / info["helper_bin"]
     if helper_src.exists():
-        dest_name = "Robust.Client.WebView.exe" if rid.startswith("win") else "Robust.Client.WebView"
-        shutil.copy2(helper_src, out_dir / dest_name)
-        print(f"  Copied {info['helper_bin']} -> {dest_name}")
+        shutil.copy2(helper_src, out_dir / info["helper_bin"])
+        print(f"  Copied {info['helper_bin']}")
     else:
         print(f"  WARNING: {helper_src} not found!")
 

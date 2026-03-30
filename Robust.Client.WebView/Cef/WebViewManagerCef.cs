@@ -43,7 +43,7 @@ namespace Robust.Client.WebView.Cef
                 _localization.GetString("cmd-flushcookies-help"),
                 (_, _, _) => NativeWebView.rnw_flush_cookies());
 
-            var subProcessName = OperatingSystem.IsWindows() ? "Robust.Client.WebView.exe" : "Robust.Client.WebView";
+            var subProcessName = OperatingSystem.IsWindows() ? "cef-helper.exe" : "cef-helper";
             var subProcessPath = Path.Combine(BasePath, subProcessName);
             _sawmill.Debug($"Subprocess path: {subProcessPath}");
 

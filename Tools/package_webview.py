@@ -53,7 +53,7 @@ MANAGED_FILES = [
 # These are copied flat into the build output by the Robust.Natives.Cef MSBuild targets.
 CEF_NATIVE_FILES_WINDOWS = [
     "robust_native_webview.dll",
-    "Robust.Client.WebView.exe",
+    "cef-helper.exe",
     "libcef.dll",
     "chrome_elf.dll",
     "libEGL.dll",
@@ -70,7 +70,7 @@ CEF_NATIVE_FILES_WINDOWS = [
 
 CEF_NATIVE_FILES_LINUX = [
     "librobust_native_webview.so",
-    "Robust.Client.WebView",
+    "cef-helper",
     "libcef.so",
     "libEGL.so",
     "libGLESv2.so",
@@ -85,7 +85,7 @@ CEF_NATIVE_FILES_LINUX = [
 
 CEF_NATIVE_FILES_MACOS = [
     "librobust_native_webview.dylib",
-    "Robust.Client.WebView",
+    "cef-helper",
     "libEGL.dylib",
     "libGLESv2.dylib",
     "libvk_swiftshader.dylib",
