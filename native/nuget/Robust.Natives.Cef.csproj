@@ -3,7 +3,7 @@
     <!-- This project only exists to pack the NuGet package -->
     <TargetFramework>netstandard2.0</TargetFramework>
     <PackageId>Robust.Natives.Cef</PackageId>
-    <PackageVersion>146.0.8</PackageVersion>
+    <PackageVersion>146.0.9</PackageVersion>
     <Authors>Space Wizards</Authors>
     <Description>Native CEF binaries and Rust webview interop for RobustToolbox</Description>
     <NoBuild>true</NoBuild>
